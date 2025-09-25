@@ -205,7 +205,7 @@ const NewMainPage: React.FC = () => {
         <div style={{ position: 'absolute', top: 16, right: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
           {user ? (
             <>
-              <span style={{ fontSize: 14 }}>안녕하세요, {user.displayName || user.email}</span>
+              <span style={{ fontSize: 14 }}>안녕하세요, {user.displayName || user.email}님</span>
               <button className="btn-primary" onClick={signOutApp} disabled={loading}>로그아웃</button>
             </>
           ) : (
