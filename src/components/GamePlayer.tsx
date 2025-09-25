@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import Avatar from 'avataaars2';
 import { useNavigate } from 'react-router-dom';
-import { Question, Player } from '../types/game';
+import { Player } from '../types/game';
 import syncManager from '../services/SyncManager';
 import { useNewGameContext } from '../contexts/NewGameContext';
 import './GamePlayer.css';
@@ -19,7 +19,7 @@ const GamePlayer: React.FC = () => {
   const { room, questions, gameState, currentQuestionIndex, players, gameSettings, phaseStartedAt, phaseDuration, paused } = state;
   
   const currentQuestion = (gameState === 'playing' || gameState === 'showingAnswer') ? (questions[currentQuestionIndex] || null) : null;
-  const currentQuestionId = currentQuestion?.id || null;
+  // const currentQuestionId = currentQuestion?.id || null;
 
   const getBackgroundColor = (colorName: string): string => {
     const colorMap: { [key: string]: string } = {
@@ -171,22 +171,7 @@ const GamePlayer: React.FC = () => {
     }
   };
 
-  const handleSubmit = () => {
-    // 수동 제출 버튼은 보조 수단(자동 제출이 기본)
-    if (!player || !currentPlayer || player.hasSubmitted || player.isEliminated || gameState !== 'playing') return;
-    const answer = selectedAnswer !== '' ? selectedAnswer : (currentQuestion?.type === 'short' ? '' : selectedAnswer);
-    actions.submitAnswer(currentPlayer.id, answer ?? '');
-  };
-
-  const handleCancelSubmission = () => {
-    if (!player || !currentPlayer || gameState !== 'playing') return;
-    
-    // 제출 취소 (새 컨텍스트 액션)
-    (actions as any).cancelSubmission?.(currentPlayer.id);
-    
-    setSelectedAnswer('');
-    setSubmissionResult(null);
-  };
+  // 수동 제출/취소는 자동 제출 흐름으로 대체됨 (경고 방지용 제거)
 
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);

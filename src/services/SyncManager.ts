@@ -165,7 +165,7 @@ class SyncManager {
           this.gameData = this.getInitialGameData();
           this.saveGameData();
           this.notifyListeners('GAME_DATA_UPDATE', this.gameData);
-          console.log('🧹 방 삭제로 게임 데이터 초기화:', deletedCode);
+      // log: 방 삭제 초기화 (디버그 모드에서만)
         }
         break;
       }
@@ -192,7 +192,7 @@ class SyncManager {
       this.gameData.lastUpdated = Date.now();
       this.saveGameData();
       
-      console.log('👤 플레이어 참여:', player.nickname);
+      // log: 플레이어 참여 (디버그 모드에서만)
     }
   }
 
@@ -201,7 +201,7 @@ class SyncManager {
     this.gameData.lastUpdated = Date.now();
     this.saveGameData();
     
-    console.log('👤 플레이어 퇴장:', playerId);
+    // log: 플레이어 퇴장 (디버그 모드에서만)
   }
 
   private handleGameStateChange(newState: Partial<GameSyncData>) {
@@ -209,7 +209,7 @@ class SyncManager {
     this.gameData.lastUpdated = Date.now();
     this.saveGameData();
     
-    console.log('🎮 게임 상태 변경:', newState);
+    // log: 게임 상태 변경 (디버그 모드에서만)
   }
 
   private handleHeartbeat(data: { sessionId: string; timestamp: number }) {
@@ -313,7 +313,7 @@ class SyncManager {
   public destroy() {
     this.channel.close();
     this.listeners.clear();
-    console.log('🔄 SyncManager 종료됨');
+    // log: SyncManager 종료 (디버그 모드에서만)
   }
 }
 
