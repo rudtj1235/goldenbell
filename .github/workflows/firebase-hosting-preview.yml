@@ -34,6 +34,14 @@ jobs:
           CI: false
         run: npm run build
 
+      - name: Sanity check service account secret
+        env:
+          SA_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_GOLDENBELLAI_D2605 }}
+        run: |
+          if [ -z "$SA_JSON" ]; then echo "SA_JSON is EMPTY - check GitHub Secret name/value" && exit 1; fi
+          echo "SA_JSON length: ${#SA_JSON}"
+          node -e "try{const j=JSON.parse(process.env.SA_JSON); console.log('client_email:', j.client_email || 'missing');}catch(e){console.error('JSON parse failed'); process.exit(1)}"
+
       - name: Debug auth and list sites
         env:
           SA_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_GOLDENBELLAI_D2605 }}
