@@ -34,6 +34,15 @@ jobs:
           CI: false
         run: npm run build
 
+      - name: Debug auth and list sites
+        env:
+          SA_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_GOLDENBELLAI_D2605 }}
+        run: |
+          echo "$SA_JSON" > $RUNNER_TEMP/gcp-sa.json
+          npm i -g firebase-tools
+          export GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/gcp-sa.json
+          firebase --project goldenbellai-d2605 hosting:sites:list || (echo "Auth failed" && exit 1)
+
       - name: Deploy to Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
