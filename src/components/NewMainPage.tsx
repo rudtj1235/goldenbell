@@ -33,17 +33,14 @@ const NewMainPage: React.FC = () => {
     loadPublicRooms();
 
     // 이벤트 리스너 등록
-    // 주의: RoomManager → BroadcastChannel → (각 탭의) RoomManager → EventBus 순으로 흐릅니다.
-    // 혹시 EventBus 수신이 누락되어도 SyncManager 직접 수신으로 보강합니다.
     const unsubscribers = [
       eventBus.on('ROOMS_UPDATED', handleRoomsUpdated),
       eventBus.on('ROOM_CREATED', handleRoomCreated),
       eventBus.on('ROOM_DELETED', handleRoomDeleted)
     ];
 
-
-    // 주기적으로 공개방 목록 새로고침
-    const refreshInterval = setInterval(loadPublicRooms, 1000);
+    // 폴링 간격 완화(1s → 5s)로 트래픽 감소
+    const refreshInterval = setInterval(loadPublicRooms, 5000);
 
     return () => {
       unsubscribers.forEach(unsub => unsub());
