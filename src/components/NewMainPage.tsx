@@ -23,6 +23,9 @@ const NewMainPage: React.FC = () => {
 
   const { actions } = useNewGameContext();
   const { user, loading, signInWithGoogle, signOutApp } = useAuth();
+  
+  // 디버깅용 로그
+  console.log('[MAIN_PAGE] User state:', { user, loading, userEmail: user?.email });
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -74,6 +77,12 @@ const NewMainPage: React.FC = () => {
   };
 
   const handleCreateRoom = async () => {
+    // 로그인 체크
+    if (!user) {
+      alert('방을 만들려면 Google 로그인이 필요합니다.');
+      return;
+    }
+
     if (subject.trim().length === 0 || subject.length > 10) {
       alert('주제는 1-10자 이내로 입력해주세요.');
       return;
@@ -82,7 +91,7 @@ const NewMainPage: React.FC = () => {
     setIsLoading(true);
     
     try {
-      console.log('🚀 방 생성 시작 - 주제:', subject.trim(), '공개방:', isPublic);
+      console.log('🚀 방 생성 시작 - 주제:', subject.trim(), '공개방:', isPublic, '사용자:', user.displayName);
       
       actions.createRoom(subject.trim(), isPublic);
       
@@ -239,9 +248,22 @@ const NewMainPage: React.FC = () => {
                   onChange={(e) => setSubject(e.target.value)}
                   placeholder="예: 한국사, 영어, 수학..."
                   maxLength={10}
-                  disabled={isLoading}
+                  disabled={isLoading || !user}
                 />
                 <span className="char-count">{subject.length}/10</span>
+                {!user && (
+                  <div style={{ 
+                    marginTop: '8px', 
+                    padding: '8px', 
+                    backgroundColor: '#fff3cd', 
+                    border: '1px solid #ffeaa7', 
+                    borderRadius: '4px', 
+                    fontSize: '14px',
+                    color: '#856404'
+                  }}>
+                    💡 방을 만들려면 먼저 Google 로그인을 해주세요.
+                  </div>
+                )}
               </div>
               
               <div className="form-group">
@@ -250,7 +272,7 @@ const NewMainPage: React.FC = () => {
                     type="checkbox"
                     checked={isPublic}
                     onChange={(e) => setIsPublic(e.target.checked)}
-                    disabled={isLoading}
+                    disabled={isLoading || !user}
                   />
                   <span className="checkmark"></span>
                   공개방으로 만들기
@@ -264,9 +286,9 @@ const NewMainPage: React.FC = () => {
               <button 
                 className="btn-primary"
                 onClick={handleCreateRoom}
-                disabled={subject.trim().length === 0 || isLoading}
+                disabled={subject.trim().length === 0 || isLoading || !user}
               >
-                {isLoading ? '방 생성 중...' : '방 만들기'}
+                {!user ? 'Google 로그인 필요' : (isLoading ? '방 생성 중...' : '방 만들기')}
               </button>
             </div>
           )}
