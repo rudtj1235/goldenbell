@@ -8,10 +8,12 @@ import { useNavigate } from 'react-router-dom';
 import { useNewGameContext } from '../contexts/NewGameContext';
 import roomManager, { PublicRoom } from '../services/RoomManager';
 import eventBus from '../services/EventBus';
+import FirestoreTest from './FirestoreTest';
 import './MainPage.css';
+import { useAuth } from '../contexts/AuthContext';
 
 const NewMainPage: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'create' | 'join'>('create');
+  const [activeTab, setActiveTab] = useState<'create' | 'join' | 'test'>('create');
   const [subject, setSubject] = useState('');
   const [isPublic, setIsPublic] = useState(false);
   const [nickname, setNickname] = useState('');
@@ -20,6 +22,7 @@ const NewMainPage: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
 
   const { actions } = useNewGameContext();
+  const { user, loading, signInWithGoogle, signOutApp } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -133,7 +136,7 @@ const NewMainPage: React.FC = () => {
   };
 
   // 참여하기 탭 클릭 시 즉시 로드되도록 탭 버튼 핸들러를 래핑
-  const selectTab = (tab: 'create' | 'join') => {
+  const selectTab = (tab: 'create' | 'join' | 'test') => {
     setActiveTab(tab);
     if (tab === 'join') {
       // 저장소에서 읽은 값과 RoomManager 메모리 값을 함께 로그로 남겨 원인 파악
@@ -189,6 +192,16 @@ const NewMainPage: React.FC = () => {
           <span>📱 크로스 브라우저 지원</span>
           <span>⚡ 자동 방 정리</span>
         </div>
+        <div style={{ position: 'absolute', top: 16, right: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+          {user ? (
+            <>
+              <span style={{ fontSize: 14 }}>안녕하세요, {user.displayName || user.email}</span>
+              <button className="btn-primary" onClick={signOutApp} disabled={loading}>로그아웃</button>
+            </>
+          ) : (
+            <button className="btn-primary" onClick={signInWithGoogle} disabled={loading}>Google 로그인</button>
+          )}
+        </div>
       </header>
 
       <div className="tab-container">
@@ -204,6 +217,12 @@ const NewMainPage: React.FC = () => {
             onClick={() => selectTab('join')}
           >
             참여하기
+          </button>
+          <button 
+            className={`tab-button ${activeTab === 'test' ? 'active' : ''}`}
+            onClick={() => setActiveTab('test')}
+          >
+            🔥 Firestore 테스트
           </button>
         </div>
 
@@ -325,6 +344,12 @@ const NewMainPage: React.FC = () => {
                   </div>
                 )}
               </div>
+            </div>
+          )}
+
+          {activeTab === 'test' && (
+            <div className="test-section">
+              <FirestoreTest />
             </div>
           )}
         </div>
