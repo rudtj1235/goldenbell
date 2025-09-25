@@ -77,8 +77,9 @@ const NewMainPage: React.FC = () => {
   };
 
   const handleCreateRoom = async () => {
-    // 로그인 체크
-    if (!user) {
+    // 로그인 체크 (더 엄격하게)
+    console.log('[CREATE_ROOM] User check:', { user, userEmail: user?.email, isLoggedIn: !!user });
+    if (!user || !user.email) {
       alert('방을 만들려면 Google 로그인이 필요합니다.');
       return;
     }
@@ -286,9 +287,9 @@ const NewMainPage: React.FC = () => {
               <button 
                 className="btn-primary"
                 onClick={handleCreateRoom}
-                disabled={subject.trim().length === 0 || isLoading || !user}
+                disabled={subject.trim().length === 0 || isLoading || !user || !user?.email}
               >
-                {!user ? 'Google 로그인 필요' : (isLoading ? '방 생성 중...' : '방 만들기')}
+                {!user || !user?.email ? 'Google 로그인 필요' : (isLoading ? '방 생성 중...' : '방 만들기')}
               </button>
             </div>
           )}
