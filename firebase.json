@@ -7,8 +7,12 @@
       "**/node_modules/**"
     ],
     "rewrites": [
+      { "source": "/api/ai", "function": "aiProxy" },
       { "source": "**", "destination": "/index.html" }
     ]
+  },
+  "functions": {
+    "source": "functions"
   }
 }
 
