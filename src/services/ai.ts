@@ -21,7 +21,12 @@ export async function generateQuestionsWithGemini(prompt: string, count = 10): P
   const apiKey = getGeminiKey();
   if (!apiKey) throw new Error('Gemini API 키가 없습니다.');
 
-  const model = 'gemini-1.5-flash';
+  // 여러 모델/버전 후보를 순차 시도 (지역/버전 가용성 이슈 회피)
+  const modelCandidates = [
+    'gemini-1.5-flash-latest',
+    'gemini-1.5-flash-002',
+    'gemini-1.5-flash',
+  ];
 
   // 2022 교육과정 준수 + 모호어(소수) 해석 규칙 + 개수 강제
   const sys = `역할: 당신은 대한민국 "2022 개정 교육과정" 기반의 학습용 문제 제작자입니다.
@@ -66,15 +71,19 @@ export async function generateQuestionsWithGemini(prompt: string, count = 10): P
     }
   } as any;
 
-  console.info('[AI_GEN] ▶ 요청 시작', { model, count, prompt });
+  console.info('[AI_GEN] ▶ 요청 시작', { model: modelCandidates[0], count, prompt });
 
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}` , {
+  // 클라이언트에서 직접 호출 시 CORS 이슈가 잦아 Firebase Functions 프록시 사용
+  const proxyUrl = '/api/ai';
+
+  const res = await fetch(proxyUrl, {
     method: 'POST',
-    headers: { 'Content-Type':'application/json' },
-    body: JSON.stringify(body),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ apiKey, body, models: modelCandidates })
   });
   if (!res.ok) {
-    console.warn('[AI_GEN] ✖ 응답 실패', { status: res.status, statusText: res.statusText });
+    const t = await res.text().catch(() => '');
+    console.warn('[AI_GEN] ✖ 프록시 실패', { status: res.status, body: t.slice(0, 300) });
     throw new Error('Gemini 호출 실패');
   }
   const data = await res.json();
