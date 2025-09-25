@@ -25,21 +25,11 @@ jobs:
         env:
           CI: false
 
-      - name: Write service account JSON
-        shell: bash
-        env:
-          SA_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_GOLDENBELLAI_D2605 }}
-        run: |
-          echo "$SA_JSON" > "$RUNNER_TEMP/gcp-sa.json"
-          echo "Wrote service account to $RUNNER_TEMP/gcp-sa.json"
-
-      - name: Install Firebase CLI
-        run: npm i -g firebase-tools
-
-      - name: Deploy with firebase-tools
-        env:
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/gcp-sa.json
-        run: |
-          firebase --project goldenbellai-d2605 hosting:sites:list || true
-          firebase deploy --only hosting --project goldenbellai-d2605 --non-interactive
+      - name: Deploy to Firebase Hosting
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: '${{ secrets.GITHUB_TOKEN }}'
+          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_GOLDENBELLAI_D2605 }}'
+          projectId: goldenbellai-d2605
+          channelId: live
 
