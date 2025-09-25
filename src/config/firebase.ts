@@ -4,7 +4,7 @@ import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 
 const firebaseConfig = {
   apiKey: "AIzaSyDnKrtZgb-Kx_sjIlkRgvpryCP0Tj3OQ7Q",
-  authDomain: "goldenbellai-d2605.firebaseapp.com",
+  authDomain: "goldenbellai.com",
   projectId: "goldenbellai-d2605",
   storageBucket: "goldenbellai-d2605.firebasestorage.app",
   messagingSenderId: "76012037597",
