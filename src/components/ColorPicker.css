@@ -1,0 +1,141 @@
+.color-picker {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(20px);
+  border-radius: 20px;
+  padding: 24px;
+  margin-bottom: 20px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.color-picker-title {
+  margin: 0 0 20px 0;
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: #2c3e50;
+  text-align: center;
+}
+
+.color-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+  background: rgba(236, 240, 241, 0.5);
+  border-radius: 12px;
+  padding: 4px;
+}
+
+.color-tab {
+  flex: 1;
+  padding: 12px 16px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  color: #7f8c8d;
+}
+
+.color-tab:hover {
+  background: rgba(255, 255, 255, 0.7);
+  color: #2c3e50;
+}
+
+.color-tab.active {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+}
+
+.color-palette {
+  min-height: 120px;
+}
+
+.current-color-info {
+  margin-bottom: 16px;
+  text-align: center;
+}
+
+.current-color-label {
+  font-size: 0.9rem;
+  color: #34495e;
+  font-weight: 600;
+  background: rgba(52, 73, 94, 0.1);
+  padding: 8px 16px;
+  border-radius: 20px;
+  display: inline-block;
+}
+
+.color-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(45px, 1fr));
+  gap: 8px;
+  max-width: 100%;
+}
+
+.color-swatch {
+  width: 45px;
+  height: 45px;
+  border: 3px solid transparent;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  position: relative;
+  overflow: hidden;
+}
+
+.color-swatch:hover {
+  transform: scale(1.1);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+  z-index: 2;
+}
+
+.color-swatch.selected {
+  border-color: #667eea;
+  box-shadow: 0 0 0 2px #667eea, 0 4px 20px rgba(102, 126, 234, 0.4);
+  transform: scale(1.05);
+}
+
+.color-swatch.selected::after {
+  content: '✓';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: bold;
+  font-size: 16px;
+  text-shadow: 0 0 4px rgba(0, 0, 0, 0.7);
+}
+
+/* 반응형 디자인 */
+@media (max-width: 768px) {
+  .color-picker {
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  
+  .color-tabs {
+    flex-direction: column;
+    gap: 4px;
+  }
+  
+  .color-tab {
+    padding: 10px 12px;
+    font-size: 0.85rem;
+  }
+  
+  .color-grid {
+    grid-template-columns: repeat(auto-fit, minmax(40px, 1fr));
+    gap: 6px;
+  }
+  
+  .color-swatch {
+    width: 40px;
+    height: 40px;
+  }
+}
+
