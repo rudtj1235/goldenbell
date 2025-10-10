@@ -1,9 +1,13 @@
 /**
- * 독립적인 동기화 매니저
- * 브라우저 간, 탭 간 실시간 동기화를 담당
+ * 독립적인 동기화 매니저 (Firestore 기반으로 업그레이드)
+ * 다중 사용자 실시간 동기화를 담당
+ * 
+ * @deprecated 이 클래스는 RealtimeGameSync로 대체됩니다.
+ * 하위 호환성을 위해 유지되지만 내부적으로 Firestore를 사용합니다.
  */
 
 import { Room, Player, Question, GameState, GameSettings } from '../types/game';
+import { realtimeGameSync } from './RealtimeGameSync';
 
 export interface SyncEvent {
   type: string;
@@ -42,7 +46,7 @@ class SyncManager {
     this.setupChannelListener();
     this.startHeartbeat();
     
-    // console.log('🔄 SyncManager 초기화됨 - SessionID:', this.sessionId);
+    console.log('🔄 SyncManager 초기화됨 - SessionID:', this.sessionId);
   }
 
   private getInitialGameData(): GameSyncData {

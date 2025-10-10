@@ -16,7 +16,7 @@ const QuestionModal: React.FC<QuestionModalProps> = ({ onClose, onSubmit }) => {
   const [activeTab, setActiveTab] = useState<QuestionType>('ox');
   const [questionText, setQuestionText] = useState('');
   const [score, setScore] = useState(10);
-  const [timeLimit, setTimeLimit] = useState(5);
+  // 제한시간은 진행 타이머에서 관리하므로 모달에서는 숨김 처리합니다.
   
   // OX 문제용
   const [oxAnswer, setOxAnswer] = useState<'O' | 'X'>('O');
@@ -106,7 +106,7 @@ const QuestionModal: React.FC<QuestionModalProps> = ({ onClose, onSubmit }) => {
       type: activeTab,
       question: questionText.trim(),
       score,
-      timeLimit,
+      timeLimit: 0,
       options,
       correctAnswer
     };
@@ -118,7 +118,6 @@ const QuestionModal: React.FC<QuestionModalProps> = ({ onClose, onSubmit }) => {
   const handleReset = () => {
     setQuestionText('');
     setScore(10);
-    setTimeLimit(5);
     setOxAnswer('O');
     setMultipleOptions([
       { text: '', isCorrect: false },
@@ -141,7 +140,7 @@ const QuestionModal: React.FC<QuestionModalProps> = ({ onClose, onSubmit }) => {
               className={`type-tab ${activeTab === 'ox' ? 'active' : ''}`}
               onClick={() => setActiveTab('ox')}
             >
-              OX 문제
+              OX
             </button>
             <button 
               className={`type-tab ${activeTab === 'multiple' ? 'active' : ''}`}
@@ -153,7 +152,7 @@ const QuestionModal: React.FC<QuestionModalProps> = ({ onClose, onSubmit }) => {
               className={`type-tab ${activeTab === 'short' ? 'active' : ''}`}
               onClick={() => setActiveTab('short')}
             >
-              주관식
+              단답형
             </button>
           </div>
 
@@ -168,27 +167,15 @@ const QuestionModal: React.FC<QuestionModalProps> = ({ onClose, onSubmit }) => {
               />
             </div>
 
-            <div className="form-row">
-              <div className="form-group">
-                <label>점수</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="100"
-                  value={score}
-                  onChange={(e) => setScore(parseInt(e.target.value))}
-                />
-              </div>
-              <div className="form-group">
-                <label>제한시간 (초)</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="60"
-                  value={timeLimit}
-                  onChange={(e) => setTimeLimit(parseInt(e.target.value))}
-                />
-              </div>
+            <div className="form-group">
+              <label>점수</label>
+              <input
+                type="number"
+                min="1"
+                max="100"
+                value={score}
+                onChange={(e) => setScore(parseInt(e.target.value))}
+              />
             </div>
 
             {activeTab === 'ox' && (

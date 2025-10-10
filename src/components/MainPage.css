@@ -1,6 +1,6 @@
 .main-page {
   min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #f9d423 0%, #ffb000 100%);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -21,7 +21,7 @@
 }
 
 .main-header p {
-  font-size: 1.2rem;
+  font-size: 1.3rem;
   opacity: 0.9;
 }
 
@@ -57,8 +57,8 @@
 
 .tab-button.active {
   background: white;
-  border-bottom-color: #667eea;
-  color: #667eea;
+  border-bottom-color: #ffb000;
+  color: #ffb000;
 }
 
 .tab-content {
@@ -98,10 +98,7 @@
   transition: border-color 0.3s ease;
 }
 
-.form-group input:focus {
-  outline: none;
-  border-color: #667eea;
-}
+.form-group input:focus { outline: none; border-color: #ffb000; }
 
 .form-group small {
   color: #6c757d;
@@ -132,7 +129,7 @@
 .create-room-btn,
 .join-room-btn {
   padding: 15px 30px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #f9d423 0%, #ffb000 100%);
   color: white;
   border: none;
   border-radius: 10px;
@@ -260,21 +257,7 @@
 }
 
 /* 새로운 동기화 시스템 스타일 */
-.status-info {
-  display: flex;
-  justify-content: center;
-  gap: 20px;
-  margin-top: 15px;
-  flex-wrap: wrap;
-}
-
-.status-info span {
-  background: rgba(255, 255, 255, 0.2);
-  padding: 5px 12px;
-  border-radius: 15px;
-  font-size: 0.9rem;
-  font-weight: 500;
-}
+/* status-info 제거 */
 
 .room-count {
   background: rgba(76, 175, 80, 0.8);

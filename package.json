@@ -19,8 +19,13 @@
   "scripts": {
     "start": "react-scripts start",
     "build": "react-scripts build",
+    "build:analyze": "npm run build && npx webpack-bundle-analyzer build/static/js/*.js",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "deploy": "npm run build && firebase deploy",
+    "deploy:hosting": "npm run build && firebase deploy --only hosting",
+    "deploy:functions": "firebase deploy --only functions",
+    "deploy:firestore": "firebase deploy --only firestore"
   },
   "eslintConfig": {
     "extends": [

@@ -8,8 +8,19 @@ import { Player } from '../types/game';
 import { useNewGameContext } from '../contexts/NewGameContext';
 import eventBus from '../services/EventBus';
 import syncManager from '../services/SyncManager';
-import Avatar from 'avataaars2';
+import AvatarDisplay from './AvatarDisplay';
+import { renderSimpleFractions } from '../utils/fractionUtils';
+import Toast from './Toast';
 import './GameHost.css';
+
+// 공동 순위 계산 함수
+const calculateRank = (sortedList: any[], index: number): number => {
+  if (index === 0) return 1;
+  if (sortedList[index].score === sortedList[index - 1].score) {
+    return calculateRank(sortedList, index - 1);
+  }
+  return index + 1;
+};
 
 const NewGameHost: React.FC = () => {
   const [timeLeft, setTimeLeft] = useState<number>(0);
@@ -17,9 +28,15 @@ const NewGameHost: React.FC = () => {
   const [eliminateMode, setEliminateMode] = useState(false);
   const [reviveMode, setReviveMode] = useState(false);
   const [countdownActive, setCountdownActive] = useState(false);
+  const [activeCardId, setActiveCardId] = useState<string | null>(null);
+  const [rankTab, setRankTab] = useState<'team' | 'individual'>('team'); // 순위 탭
+  const [finalPlayers, setFinalPlayers] = useState<Player[]>([]); // 게임 종료 시 최종 순위 데이터
 
   const { state, actions } = useNewGameContext();
   const { room, questions, players, gameState, currentQuestionIndex, gameSettings, phaseStartedAt, phaseDuration, paused } = state;
+  
+  // finished 화면 표시 조건: finalPlayers가 있으면 무조건 finished
+  const displayGameState = finalPlayers.length > 0 ? 'finished' : gameState;
   const mountedAtRef = useRef<number>(Date.now());
   
   const currentQuestion = (gameState === 'playing' || gameState === 'showingAnswer' || gameState === 'paused')
@@ -37,6 +54,21 @@ const NewGameHost: React.FC = () => {
     return colorMap[colorName] || '#B1E2FF';
   };
 
+  const getTeamBg = (team?: string): string => {
+    const map: Record<string, string> = {
+      '': 'rgba(255,255,255,0.85)',
+      'A': 'rgba(244,67,54,0.2)',
+      'B': 'rgba(255,152,0,0.2)',
+      'C': 'rgba(255,235,59,0.2)',
+      'D': 'rgba(76,175,80,0.2)',
+      'E': 'rgba(33,150,243,0.2)',
+      'F': 'rgba(63,81,181,0.2)',
+      'G': 'rgba(156,39,176,0.2)',
+      'H': 'rgba(158,158,158,0.2)'
+    };
+    return map[String(team || '')] ?? 'rgba(255,255,255,0.85)';
+  };
+
   useEffect(() => {
     // 이벤트 리스너 등록
     const unsubscribers = [
@@ -45,13 +77,37 @@ const NewGameHost: React.FC = () => {
       eventBus.on('ANSWER_SHOWN', handleAnswerShown),
       eventBus.on('PLAYER_JOIN', handlePlayerJoin),
       eventBus.on('PLAYER_LEAVE', handlePlayerLeave),
-      eventBus.on('ANSWER_SUBMITTED', handleAnswerSubmitted)
+      eventBus.on('ANSWER_SUBMITTED', handleAnswerSubmitted),
     ];
 
     return () => {
       unsubscribers.forEach(unsub => unsub());
     };
   }, []);
+  
+  // gameState가 finished로 변경되면 finalPlayers 저장
+  const prevGameStateForFinished = useRef<string>('');
+  const snapshotPlayers = useRef<Player[]>([]);
+  
+  useEffect(() => {
+    // playing/showingAnswer 중에는 계속 스냅샷 업데이트
+    if (gameState === 'playing' || gameState === 'showingAnswer') {
+      snapshotPlayers.current = [...players];
+    }
+    
+    // finished로 전환되면 마지막 스냅샷 저장
+    if (gameState === 'finished' && prevGameStateForFinished.current !== 'finished') {
+      setFinalPlayers(snapshotPlayers.current.length > 0 ? snapshotPlayers.current : [...players]);
+    }
+    
+    // finished가 아닌 다른 상태로 가면 초기화
+    if (prevGameStateForFinished.current === 'finished' && gameState !== 'finished') {
+      setFinalPlayers([]);
+      snapshotPlayers.current = [];
+    }
+    
+    prevGameStateForFinished.current = gameState;
+  }, [gameState, players]);
 
   useEffect(() => {
     console.info('[AUTO_FLOW] mount or state hydrate', {
@@ -65,60 +121,34 @@ const NewGameHost: React.FC = () => {
     });
   }, []);
 
+  // 진행페이지는 타이머의 원천이 아님: 컨텍스트 phaseStartedAt/phaseDuration로만 시간 계산
   useEffect(() => {
-    // 단계 전환 시 타이머 초기화
-    if (gameState === 'playing' && currentQuestion) {
-      setTimeLeft(gameSettings.timeLimit);
-      setShowAnswer(false);
-      setCountdownActive(true);
-      console.info('[AUTO_TIMER] enter playing', {
-        index: currentQuestionIndex,
-        timeLimit: gameSettings.timeLimit
-      });
-    } else if (gameState === 'showingAnswer') {
-      setTimeLeft(gameSettings.answerRevealTime);
-      setShowAnswer(true);
-      setCountdownActive(true);
-      console.info('[AUTO_TIMER] enter showingAnswer', {
-        index: currentQuestionIndex,
-        answerRevealTime: gameSettings.answerRevealTime
-      });
-    } else {
-      setCountdownActive(false);
-    }
-  }, [gameState, currentQuestion, gameSettings.answerRevealTime]);
+    setShowAnswer(gameState === 'showingAnswer');
+  }, [gameState]);
 
+  // 타이머 계산 (phaseStartedAt 기준) - 실시간 업데이트
   useEffect(() => {
-    // 서버/브로드캐스트 기준 남은 시간 계산
-    if ((gameState === 'playing' || gameState === 'showingAnswer') && phaseStartedAt && phaseDuration && !paused) {
+    if (displayGameState === 'finished' || displayGameState === 'waiting') {
+      setTimeLeft(0);
+      return;
+    }
+    if (!phaseStartedAt || !phaseDuration) {
+      setTimeLeft(0);
+      return;
+    }
+    
+    if (paused) return; // 일시정지 중에는 타이머 업데이트 중단
+    
+    const updateTimer = () => {
       const elapsed = Math.floor((Date.now() - phaseStartedAt) / 1000);
-      const remain = Math.max(0, (phaseDuration || 0) - elapsed);
+      const remain = Math.max(0, phaseDuration - elapsed);
       setTimeLeft(remain);
-      setCountdownActive(true);
-      console.debug('[AUTO_TIMER] phase sync', {
-        gameState,
-        now: Date.now(),
-        phaseStartedAt,
-        phaseDuration,
-        elapsed,
-        remain,
-        paused
-      });
-    }
-  }, [gameState, phaseStartedAt, phaseDuration, paused]);
-
-  useEffect(() => {
-    if (!countdownActive) return;
-    if (!(gameState === 'playing' || gameState === 'showingAnswer')) return;
-    if (paused) return;
-    const timer = setInterval(() => {
-      setTimeLeft(prev => {
-        const next = Math.max(0, prev - 1);
-        return next;
-      });
-    }, 1000);
+    };
+    
+    updateTimer(); // 즉시 한 번 업데이트
+    const timer = setInterval(updateTimer, 1000);
     return () => clearInterval(timer);
-  }, [countdownActive, gameState, paused]);
+  }, [gameState, phaseStartedAt, phaseDuration, paused]);
 
   useEffect(() => {
     if (timeLeft === 3 || timeLeft === 2 || timeLeft === 1 || timeLeft === 0) {
@@ -127,6 +157,7 @@ const NewGameHost: React.FC = () => {
   }, [timeLeft, gameState]);
 
   useEffect(() => {
+    if (displayGameState === 'finished' || displayGameState === 'waiting') return; // 종료/대기 상태에서는 자동 진행 중지
     if (!(gameState === 'playing' || gameState === 'showingAnswer')) return;
     if (timeLeft > 0) return;
     // 새로 열린 진행페이지에서 즉시 단계 전환되는 현상 방지: 마운트 후 짧은 유예
@@ -156,49 +187,30 @@ const NewGameHost: React.FC = () => {
     }
   }, [timeLeft, gameState, gameSettings.autoMode, actions, phaseStartedAt, phaseDuration]);
 
-  // 시간 조정 이벤트
-  useEffect(() => {
-    const unsub = eventBus.on('ADJUST_TIME', (delta: number) => {
-      setTimeLeft(prev => Math.max(0, prev + (Number(delta) || 0)));
-    });
-    return () => unsub();
-  }, []);
-
-  // 탭 간 시간 조정 동기화
-  useEffect(() => {
-    const handler = (delta: number) => {
-      setTimeLeft(prev => Math.max(0, prev + (Number(delta) || 0)));
-    };
-    (syncManager as any).addEventListener?.('ADJUST_TIME', handler);
-    return () => {
-      try { (syncManager as any).removeEventListener?.('ADJUST_TIME', handler); } catch {}
-    };
-  }, []);
+  // ADJUST_TIME 이벤트는 phaseStartedAt/phaseDuration 업데이트로 자동 처리됨 (중복 제거)
 
   const handleGameStateChange = (data: any) => {
-    console.log('🎮 게임 상태 변경:', data);
+    // 상태 변경 처리
   };
 
   const handleNextQuestion = (data: any) => {
-    console.log('➡️ 다음 문제:', data);
     setShowAnswer(false);
   };
 
   const handleAnswerShown = (data: any) => {
-    console.log('💡 정답 공개:', data);
     setShowAnswer(true);
   };
 
   const handlePlayerJoin = (player: Player) => {
-    console.log('👤 새 참여자:', player.nickname);
+    // 참여자 처리
   };
 
   const handlePlayerLeave = (playerId: string) => {
-    console.log('👤 참여자 퇴장:', playerId);
+    // 퇴장 처리
   };
 
   const handleAnswerSubmitted = (data: any) => {
-    console.log('📝 답안 제출:', data);
+    // 답안 제출 처리
   };
 
   const handlePlayerClick = (playerId: string) => {
@@ -233,11 +245,30 @@ const NewGameHost: React.FC = () => {
 
   const sortPlayers = (players: Player[]): Player[] => {
     return [...players].sort((a, b) => {
-      // 탈락자를 뒤로
+      // 1. 탈락자를 뒤로
       if (a.isEliminated !== b.isEliminated) {
         return a.isEliminated ? 1 : -1;
       }
-      // 점수 순으로 정렬
+      
+      // 2. 팀별 정렬 (개인 → A → B → C → ... → H)
+      const getTeamOrder = (team?: string): number => {
+        if (!team) return 0; // 개인전이 가장 앞
+        return team.charCodeAt(0) - 64; // A=1, B=2, C=3, ...
+      };
+      
+      const teamOrderA = getTeamOrder(a.team);
+      const teamOrderB = getTeamOrder(b.team);
+      
+      if (teamOrderA !== teamOrderB) {
+        return teamOrderA - teamOrderB;
+      }
+      
+      // 3. 같은 팀 내에서는 점수 순
+      if (a.team === b.team) {
+        return b.score - a.score;
+      }
+      
+      // 4. 개인전끼리는 점수 순
       return b.score - a.score;
     });
   };
@@ -247,6 +278,17 @@ const NewGameHost: React.FC = () => {
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
+
+  // 글로벌 클릭으로 카드 선택 상태 해제 (훅은 조건문 이전에서 호출)
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.closest('.player-card')) return;
+      setActiveCardId(null);
+    };
+    document.addEventListener('click', onDocClick);
+    return () => document.removeEventListener('click', onDocClick);
+  }, []);
 
   if (!room) {
     return (
@@ -261,7 +303,8 @@ const NewGameHost: React.FC = () => {
 
   return (
     <div className="game-host">
-      {(gameState === 'playing' || gameState === 'paused' || gameState === 'showingAnswer') && (
+      <Toast />
+      {(gameState === 'playing' || gameState === 'showingAnswer' || gameState === 'paused') && (
         <div className="game-timer" style={{ position: 'fixed', top: 12, right: 12 }}>
           <div className={`timer ${timeLeft <= 5 ? 'warning' : ''}`}>⏱️ {formatTime(timeLeft)}</div>
         </div>
@@ -273,12 +316,12 @@ const NewGameHost: React.FC = () => {
             <div className="question-header" style={{ marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div className="question-info" style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
                 <span className="question-number">문제 {currentQuestionIndex + 1}/{questions.length}</span>
-                <span className="question-score">배점: {currentQuestion.score}점</span>
+                <span className="badge badge--warn">배점: {currentQuestion.score}점</span>
               </div>
             </div>
 
             <div className="question-content">
-              <h2 className="question-text">{currentQuestion.question}</h2>
+              <h2 className="question-text">{renderSimpleFractions(currentQuestion.question)}</h2>
 
               {currentQuestion.image && (
                 <div className="question-image">
@@ -296,18 +339,18 @@ const NewGameHost: React.FC = () => {
               {currentQuestion.type === 'multiple' && currentQuestion.options && (
                 <div className="multiple-options">
                   {currentQuestion.options.map((option: string, index: number) => (
-                    <div key={index} className={`multiple-option ${showAnswer && index === currentQuestion.correctAnswer ? 'correct' : ''}`}>
+                    <div key={index} className={`multiple-option ${showAnswer && index === currentQuestion.correctAnswer ? 'correct' : ''}`} style={{ color: '#111' }}>
                       <span className="option-number">{index + 1}</span>
-                      <span className="option-text">{option}</span>
+                      <span className="option-text">{renderSimpleFractions(option)}</span>
                     </div>
                   ))}
                 </div>
               )}
 
-              {currentQuestion.type === 'short' && (
-                <div className="short-answer" style={{ background: showAnswer ? '#28a745' : '#f8f9fa', color: showAnswer ? '#fff' : '#333' }}>
+              {currentQuestion.type === 'short' && showAnswer && (
+                <div className="short-answer">
                   <h3>정답</h3>
-                  <p className="answer-text">{showAnswer ? String(currentQuestion.correctAnswer) : '정답 공개 대기'}</p>
+                  <p className="answer-text">{renderSimpleFractions(String(currentQuestion.correctAnswer))}</p>
                 </div>
               )}
             </div>
@@ -316,18 +359,128 @@ const NewGameHost: React.FC = () => {
           <div className="no-question">
             {gameState === 'waiting' || gameState === 'paused' ? (
               <div className="waiting-message">
-                <h2>🎯 대기중</h2>
+                <h2>대기중</h2>
                 <p>문제를 추가하거나 게임을 시작해 주세요.</p>
               </div>
-            ) : gameState === 'finished' ? (
-              <div className="finished-message">
-                <h2>🎉 게임이 종료되었습니다!</h2>
-                <p>모든 문제가 완료되었습니다.</p>
+            ) : displayGameState === 'finished' ? (
+              <div className="finished-message" style={{ width: '100%', maxWidth: 'min(90vw, 1200px)', margin: '0 auto' }}>
+                <h2 style={{ color: 'white', textShadow: '2px 2px 4px rgba(0,0,0,0.3)', marginBottom: '30px', fontSize: '2.5rem' }}>🎉 게임 종료!</h2>
+                
+                {/* 순위 탭 */}
+                <div style={{ background: 'white', borderRadius: '20px', padding: 'clamp(20px, 4vw, 50px)', marginTop: '20px', minHeight: '500px' }}>
+                  <div style={{ display: 'flex', gap: '15px', marginBottom: '25px' }}>
+                    <button 
+                      onClick={() => setRankTab('team')}
+                      style={{
+                        flex: 1,
+                        padding: '18px',
+                        border: 'none',
+                        borderRadius: '12px',
+                        fontSize: '1.3rem',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        background: rankTab === 'team' ? '#ffc107' : '#f0f0f0',
+                        color: rankTab === 'team' ? '#111' : '#666',
+                        transition: 'all 0.3s'
+                      }}
+                    >
+                      팀 순위
+                    </button>
+                    <button 
+                      onClick={() => setRankTab('individual')}
+                      style={{
+                        flex: 1,
+                        padding: '18px',
+                        border: 'none',
+                        borderRadius: '12px',
+                        fontSize: '1.3rem',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        background: rankTab === 'individual' ? '#ffc107' : '#f0f0f0',
+                        color: rankTab === 'individual' ? '#111' : '#666',
+                        transition: 'all 0.3s'
+                      }}
+                    >
+                      개인 순위
+                    </button>
+                  </div>
+                  
+                  {/* 순위 리스트 */}
+                  <div style={{ maxHeight: '450px', overflowY: 'auto' }}>
+                    {rankTab === 'team' ? (
+                      <ol style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '15px' }}>
+                        {(() => {
+                          const playersToShow = finalPlayers.length > 0 ? finalPlayers : players;
+                          const teamRanks = Object.values(
+                            playersToShow.reduce((acc: any, p: Player) => {
+                              const key = p.team || p.nickname;
+                              acc[key] = acc[key] || { team: key, score: 0 };
+                              acc[key].score += p.score;
+                              return acc;
+                            }, {})
+                          ).sort((a: any, b: any) => b.score - a.score);
+                          
+                          return teamRanks.map((t: any, i: number) => (
+                            <li key={t.team} style={{ 
+                              display: 'flex', 
+                              justifyContent: 'space-between', 
+                              alignItems: 'center',
+                              padding: '18px 25px',
+                              marginBottom: '12px',
+                              background: '#f8f9fa',
+                              borderRadius: '12px',
+                              border: '3px solid #e9ecef'
+                            }}>
+                              <span style={{ fontWeight: 700, fontSize: '1.5rem', color: '#111', minWidth: '60px' }}>
+                                {calculateRank(teamRanks, i)}위
+                              </span>
+                              <span style={{ flex: 1, fontWeight: 600, color: '#111', fontSize: '1.3rem' }}>
+                                {t.team}
+                              </span>
+                              <span style={{ fontWeight: 700, color: '#ffc107', fontSize: '1.5rem' }}>
+                                {t.score}점
+                              </span>
+                            </li>
+                          ));
+                        })()}
+                      </ol>
+                    ) : (
+                      <ol style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '15px' }}>
+                        {(() => {
+                          const playersToShow = finalPlayers.length > 0 ? finalPlayers : players;
+                          const individualRanks = [...playersToShow].sort((a, b) => b.score - a.score);
+                          return individualRanks.map((p: Player, i: number) => (
+                            <li key={p.id} style={{ 
+                              display: 'flex', 
+                              justifyContent: 'space-between', 
+                              alignItems: 'center',
+                              padding: '18px 25px',
+                              marginBottom: '12px',
+                              background: '#f8f9fa',
+                              borderRadius: '12px',
+                              border: '3px solid #e9ecef'
+                            }}>
+                              <span style={{ fontWeight: 700, fontSize: '1.5rem', color: '#111', minWidth: '60px' }}>
+                                {calculateRank(individualRanks, i)}위
+                              </span>
+                              <span style={{ flex: 1, fontWeight: 600, color: '#111', fontSize: '1.3rem' }}>
+                                {p.nickname}{p.team ? ` (${p.team})` : ''}
+                              </span>
+                              <span style={{ fontWeight: 700, color: '#ffc107', fontSize: '1.5rem' }}>
+                                {p.score}점
+                              </span>
+                            </li>
+                          ));
+                        })()}
+                      </ol>
+                    )}
+                  </div>
+                </div>
               </div>
             ) : (
               // 남은 문제가 없고 종료가 아닌 경우 대기 처리
               <div className="waiting-message">
-                <h2>🎯 대기중</h2>
+                <h2>대기중</h2>
                 <p>문제를 추가하거나 게임을 시작해 주세요.</p>
               </div>
             )}
@@ -346,45 +499,24 @@ const NewGameHost: React.FC = () => {
             </div>
           </div>
           
-          <div className="players-grid">
+          <div className="players-grid" onClick={(e)=>e.stopPropagation()}>
             {sortPlayers(players).map(player => (
               <div 
                 key={player.id}
                 className={`player-card ${player.isEliminated ? 'eliminated' : ''} ${
                   player.hasSubmitted ? 'submitted' : ''
                 } ${eliminateMode || reviveMode ? 'clickable' : ''}`}
-                onClick={() => handlePlayerClick(player.id)}
+                onClick={() => {
+                  setActiveCardId(prev => prev === player.id ? null : player.id);
+                }}
               >
-                <div className="player-avatar">
-                  <button className="hover-action" onClick={(e) => {
-                    e.stopPropagation();
-                    if (player.isEliminated) {
-                      actions.revivePlayer(player.id);
-                    } else {
-                      actions.eliminatePlayer(player.id);
-                    }
-                  }}>
-                    {player.isEliminated ? '살리기' : '탈락시키기'}
-                  </button>
+                <div className="player-avatar" style={{ background: getTeamBg(player.team) }}>
+                  {/* player-card 내부에서만 정보와 컨트롤이 배치되도록 유지 */}
                   <div 
                     className="avatar-background"
-                    style={{ backgroundColor: getBackgroundColor(player.avatar?.backgroundColor || 'PastelBlue') }}
+                    style={{ backgroundColor: getTeamBg(player.team) }}
                   >
-                    <Avatar
-                      style={{ width: '50px', height: '50px' }}
-                      avatarStyle="Transparent"
-                      topType={player.avatar?.topType || 'ShortHairShortFlat'}
-                      accessoriesType={player.avatar?.accessoriesType || 'Blank'}
-                      hairColor={player.avatar?.hairColor || 'BrownDark'}
-                      facialHairType="Blank"
-                      facialHairColor="BrownDark"
-                      clotheType="ShirtCrewNeck"
-                      clotheColor={player.avatar?.clotheColor || 'Blue01'}
-                      eyeType={player.avatar?.eyeType || 'Happy'}
-                      eyebrowType={player.avatar?.eyebrowType || 'Default'}
-                      mouthType={player.avatar?.mouthType || 'Smile'}
-                      skinColor={player.avatar?.skinColor || 'Light'}
-                    />
+                    <AvatarDisplay avatar={player.avatar} size={50} />
                   </div>
                   {player.hasSubmitted && !player.isEliminated && (
                     <div className="submitted-indicator">✓</div>
@@ -394,12 +526,36 @@ const NewGameHost: React.FC = () => {
                   )}
                 </div>
                 <div className="player-info">
-                  <span className="player-name">{player.nickname}</span>
-                  <span className="player-score">{player.score}점</span>
-                  {player.team && (
-                    <span className="player-team">{player.team}팀</span>
-                  )}
+                  <div className="row-top">
+                    <span className="player-name">{player.nickname}</span>
+                    {player.team && (
+                      <span className="player-team">{player.team}팀</span>
+                    )}
+                  </div>
+                  <div className="row-bottom">
+                    <span className="player-score" style={{ background: getTeamBg(player.team) }}>{player.score}점</span>
+                  </div>
                 </div>
+
+                {activeCardId === player.id && (
+                  <div className="card-actions-overlay" onClick={(e)=>e.stopPropagation()}>
+                    {!player.isEliminated ? (
+                      <button
+                        className="card-action-btn"
+                        onClick={() => { actions.eliminatePlayer(player.id); setActiveCardId(null); }}
+                      >
+                        탈락시키기
+                      </button>
+                    ) : (
+                      <button
+                        className="card-action-btn"
+                        onClick={() => { actions.revivePlayer(player.id); setActiveCardId(null); }}
+                      >
+                        부활시키기
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
             
@@ -411,6 +567,14 @@ const NewGameHost: React.FC = () => {
             )}
           </div>
         </div>
+        {/* 카드 클릭 시 표시되는 탈락/부활 컨트롤 */}
+        {(eliminateMode || reviveMode) && (
+          <div className="elimination-controls">
+            <button className="control-btn" onClick={(e)=>{e.stopPropagation(); setEliminateMode(true); setReviveMode(false);}}>탈락시키기 모드</button>
+            <button className="control-btn" onClick={(e)=>{e.stopPropagation(); setReviveMode(true); setEliminateMode(false);}}>부활시키기 모드</button>
+            <button className="control-btn" onClick={(e)=>{e.stopPropagation(); cancelMode();}}>모드 해제</button>
+          </div>
+        )}
       </footer>
     </div>
   );

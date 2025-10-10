@@ -1,18 +1,57 @@
-rules_version='2'
+rules_version = '2'
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      // This rule allows anyone with your database reference to view, edit,
-      // and delete all data in your database. It is useful for getting
-      // started, but it is configured to expire after 30 days because it
-      // leaves your app open to attackers. At that time, all client
-      // requests to your database will be denied.
-      //
-      // Make sure to write security rules for your app before that time, or
-      // else all client requests to your database will be denied until you
-      // update your rules.
-      allow read, write: if request.time < timestamp.date(2025, 10, 25);
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isHost() {
+      return isSignedIn() && resource.data.room.hostId == request.auth.uid;
+    }
+
+    function isPublicRoom() {
+      return resource.data.room.isPublic == true;
+    }
+
+    function playersOnlyChange() {
+      // 비호스트 사용자가 변경 가능한 필드를 제한: players, lastUpdated, version, updatedAt
+      return request.resource.data.diff(resource.data).changedKeys().hasOnly(["players", "lastUpdated", "version", "updatedAt"]);
+    }
+
+    function validRoomCreate() {
+      // 방 생성 시 필수 필드 검증 및 hostId=auth.uid 강제
+      return (
+        request.resource.data.room is map &&
+        request.resource.data.room.hostId == request.auth.uid &&
+        request.resource.data.room.code == request.resource.id &&
+        request.resource.data.room.subject is string &&
+        request.resource.data.room.subject.size() > 0 && request.resource.data.room.subject.size() <= 50 &&
+        request.resource.data.room.isPublic is bool &&
+        request.resource.data.players is map &&
+        request.resource.data.questions is list &&
+        request.resource.data.gameState in ["waiting", "playing", "paused", "showingAnswer", "finished"] &&
+        request.resource.data.currentQuestionIndex is int &&
+        request.resource.data.gameSettings is map
+      );
+    }
+
+    match /game_rooms/{roomId} {
+      // 읽기: 공개방은 누구나, 비공개는 로그인 사용자만
+      allow get, list: if isPublicRoom() || isSignedIn();
+
+      // 생성: 로그인 + hostId=auth.uid + 구조 검증
+      allow create: if isSignedIn() && validRoomCreate();
+
+      // 업데이트: 호스트는 전체 업데이트 가능. 비호스트는 players만 업데이트 가능
+      allow update: if (
+        (isHost()) ||
+        (isSignedIn() && playersOnlyChange())
+      );
+
+      // 삭제: 호스트만 가능
+      allow delete: if isHost();
     }
   }
 }

@@ -3,11 +3,13 @@
  * SyncManager, RoomManager, EventBus를 활용한 독립적인 상태 관리
  */
 
-import React, { createContext, useContext, useEffect, useState, ReactNode, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useState, ReactNode, useRef, useMemo } from 'react';
 import { Room, Player, Question, GameState, GameSettings } from '../types/game';
-import syncManager from '../services/SyncManager';
+import { firestoreSyncManager as syncManager } from '../services/FirestoreSyncManager';
 import roomManager from '../services/RoomManager';
 import eventBus from '../services/EventBus';
+import { useAuth } from './AuthContext';
+import logger from '../utils/logger';
 
 interface GameContextState {
   room: Room | null;
@@ -20,17 +22,20 @@ interface GameContextState {
   phaseStartedAt: number | null;
   phaseDuration: number | null;
   paused: boolean;
+  pausedPrevState?: GameState | null;
   isLoading: boolean;
   error: string | null;
+  resumeGuardUntil?: number | null;
 }
 
 interface GameContextValue {
   state: GameContextState;
   actions: {
-    createRoom: (subject: string, isPublic: boolean) => void;
-    joinRoom: (roomCode: string, player: Player) => boolean;
+    createRoom: (subject: string, isPublic: boolean) => Promise<void>;
+    joinRoom: (roomCode: string, player: Player) => Promise<boolean>;
     addQuestion: (question: Question) => void;
     addQuestionsBulk: (questions: Question[]) => void;
+    updateQuestion: (question: Question) => void;
     deleteQuestion: (questionId: string) => void;
     reorderQuestions: (questions: Question[]) => void;
     startGame: () => void;
@@ -47,14 +52,15 @@ interface GameContextValue {
     updateGameSettings: (settings: Partial<GameSettings>) => void;
     resetGame: () => void;
     updateHostActivity: (roomCode: string) => void;
+    adjustTime?: (delta: number) => void;
   };
 }
 
 const GameContext = createContext<GameContextValue | null>(null);
 
 const initialGameSettings: GameSettings = {
-  timeLimit: 5,
-  answerRevealTime: 5,
+  timeLimit: 30,
+  answerRevealTime: 10,
   eliminationMode: false,
   eliminationThreshold: 3,
   autoMode: true
@@ -71,15 +77,23 @@ const initialState: GameContextState = {
   phaseStartedAt: null,
   phaseDuration: null,
   paused: false,
+  pausedPrevState: null,
   isLoading: true,
-  error: null
+  error: null,
+  resumeGuardUntil: null
 };
 
 export function NewGameProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<GameContextState>(initialState);
-  const autoTickRef = useRef<any>(null);
+  const { user } = useAuth();
+  const isHost = useMemo(() => {
+    const uid = user?.uid || (typeof window !== 'undefined' ? (window as any).firebaseAuthUid : null);
+    return !!(state.room?.hostId && uid && state.room.hostId === uid);
+  }, [state.room?.hostId, user?.uid]);
+  const autoTickRef = useRef<any>(null); // legacy (removed)
   const lastAutoKeyRef = useRef<string | null>(null);
-  const autoTimerRef = useRef<any>(null);
+  const deadlineTimerRef = useRef<any>(null);
+  const deadlineKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     // SyncManager에서 초기 데이터 로드
@@ -99,13 +113,7 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
       isLoading: false
     }));
 
-    // 이벤트 리스너 등록
-    const unsubscribers: Array<() => void> = [
-      eventBus.on('PLAYER_JOIN', handlePlayerJoin),
-      eventBus.on('PLAYER_LEAVE', handlePlayerLeave),
-    ];
-
-    // SyncManager 리스너는 해제 함수가 없으므로 별도 관리
+    // SyncManager 리스너만 사용 (eventBus 중복 제거)
     const syncListeners: Array<{type: string; cb: Function}> = [];
     const addSync = (type: string, cb: Function) => {
       syncManager.addEventListener(type, cb);
@@ -116,83 +124,84 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
     addSync('PLAYER_LEAVE', handleSyncPlayerLeave);
     addSync('GAME_STATE_CHANGE', handleSyncGameStateChange);
 
-    console.log('🎮 NewGameContext 초기화됨');
+    logger.debug('🎮 NewGameContext 초기화됨');
+
+    // 새로고침 복원: 저장된 roomCode가 있으면 자동 재연결 시도
+    const saved = (() => { try { return localStorage.getItem('currentRoomCode'); } catch { return null; } })();
+    if (saved) {
+      (async () => {
+        try {
+          await (syncManager as any).connectToRoom(saved);
+          logger.debug('🔄 재연결 완료:', saved);
+        } catch (e) {
+          console.warn('재연결 실패:', e);
+        }
+      })();
+    }
 
     return () => {
-      unsubscribers.forEach(unsub => unsub());
       // SyncManager 리스너 해제
       syncListeners.forEach(({ type, cb }) => {
         try {
           (syncManager as any).removeEventListener?.(type, cb);
         } catch {}
       });
-      console.log('🎮 NewGameContext 정리됨');
+      logger.debug('🎮 NewGameContext 정리됨');
     };
   }, []);
 
-  // 단일 간단 타임아웃 체크 루프: 타이머가 끝나면 다음 단계로 전환
+  // Deadline 기반 단일 타임아웃 스케줄러로 자동 전환
+  const clearDeadline = () => {
+    if (deadlineTimerRef.current) {
+      try { clearTimeout(deadlineTimerRef.current); } catch {}
+      deadlineTimerRef.current = null;
+      deadlineKeyRef.current = null;
+    }
+  };
+
   useEffect(() => {
-    if (autoTickRef.current) {
-      try { clearInterval(autoTickRef.current); } catch {}
-      autoTickRef.current = null;
-    }
-    autoTickRef.current = setInterval(() => {
-      const s = state as any;
-      if (!s?.gameSettings?.autoMode) return;
-      if (s.paused) return;
-      if (!(s.gameState === 'playing' || s.gameState === 'showingAnswer')) return;
-      if (!s.phaseStartedAt || !s.phaseDuration) return;
-      const expired = (Date.now() - s.phaseStartedAt) / 1000 >= s.phaseDuration;
-      if (!expired) return;
-      const key = `${s.gameState}:${s.currentQuestionIndex}`;
-      if (lastAutoKeyRef.current === key) return;
-      lastAutoKeyRef.current = key;
-      if (s.gameState === 'playing') actions.showAnswer();
-      else actions.nextQuestion();
-    }, 300);
-    return () => {
-      if (autoTickRef.current) {
-        try { clearInterval(autoTickRef.current); } catch {}
-        autoTickRef.current = null;
+    clearDeadline();
+    const s = state as any;
+    if (!s?.gameSettings?.autoMode) return; // 자동 모드가 아닐 때 미사용
+    if (s.paused) return; // 일시정지 시 스케줄 정지
+    if (s.gameState === 'finished' || s.gameState === 'waiting') return; // 종료 또는 대기 상태에서는 자동 진행 중지
+    if (!(s.gameState === 'playing' || s.gameState === 'showingAnswer')) return;
+    // 호스트만 상태 전이 스케줄 실행 (참가자는 수신만)
+    if (!isHost) return;
+    if (!s.phaseStartedAt || !s.phaseDuration) return;
+
+    const now = Date.now();
+    const elapsed = Math.floor((now - s.phaseStartedAt) / 1000);
+    const remain = Math.max(0, s.phaseDuration - elapsed);
+    const key = `${s.gameState}:${s.currentQuestionIndex}`;
+    deadlineKeyRef.current = key;
+
+    if (remain === 0) {
+      // 즉시 전환
+      if (lastAutoKeyRef.current !== key) {
+        lastAutoKeyRef.current = key;
+        if (s.gameState === 'playing') actions.showAnswer(); else actions.nextQuestion();
       }
-    };
-  }, [state.gameSettings?.autoMode, state.gameState, state.phaseStartedAt, state.phaseDuration, state.paused, state.currentQuestionIndex]);
-
-  const handleGameDataUpdate = (data: any) => {
-    console.log('🔄 게임 데이터 업데이트:', data);
-    setState(prev => ({ ...prev, ...data }));
-  };
-
-  const handlePlayerJoin = (player: Player) => {
-    setState(prev => ({
-      ...prev,
-      players: prev.players.find(p => p.id === player.id) 
-        ? prev.players 
-        : [...prev.players, player]
-    }));
-  };
-
-  const handlePlayerLeave = (playerId: string) => {
-    setState(prev => ({
-      ...prev,
-      players: prev.players.filter(p => p.id !== playerId)
-    }));
-  };
-
-  const handleGameStateChange = (data: any) => {
-    setState(prev => ({ ...prev, ...data }));
-  };
-
-  const handleRoomCreated = (room: any) => {
-    console.log('🏠 방 생성됨:', room);
-  };
-
-  const handleRoomDeleted = (roomCode: string) => {
-    console.log('🗑️ 방 삭제됨:', roomCode);
-    if (state.room?.code === roomCode) {
-      setState(prev => ({ ...prev, room: null, players: [] }));
+      return;
     }
-  };
+
+    deadlineTimerRef.current = setTimeout(() => {
+      // 최신 키/상태 확인으로 레이스 방지
+      const t = state as any;
+      if (!t?.gameSettings?.autoMode || t.paused) return;
+      if (t.gameState === 'finished' || t.gameState === 'waiting') return; // 종료/대기 상태 체크
+      if (!(t.gameState === 'playing' || t.gameState === 'showingAnswer')) return;
+      const currentKey = `${t.gameState}:${t.currentQuestionIndex}`;
+      if (currentKey !== deadlineKeyRef.current) return;
+      if (lastAutoKeyRef.current === currentKey) return;
+      lastAutoKeyRef.current = currentKey;
+      if (t.gameState === 'playing') actions.showAnswer(); else actions.nextQuestion();
+    }, remain * 1000);
+
+    return clearDeadline;
+  }, [state.gameSettings?.autoMode, state.gameState, state.phaseStartedAt, state.phaseDuration, state.paused, state.currentQuestionIndex, isHost]);
+
+  // 사용하지 않는 핸들러 제거 (syncManager가 직접 처리)
 
   // Sync 이벤트 핸들러들
   const handleSyncDataUpdate = (data: any) => {
@@ -244,17 +253,22 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
           : player
       );
       setState(prev => ({ ...prev, players: updatedPlayers }));
-      syncManager.updateGameData({ players: updatedPlayers });
+      // 내 답안 초안은 해당 플레이어 필드만 부분 업데이트로 전송 (트래픽 절감)
+      syncManager.updatePlayer(playerId, { currentAnswer: String(answer) } as any);
     },
-    createRoom: (subject: string, isPublic: boolean) => {
+    createRoom: async (subject: string, isPublic: boolean) => {
       try {
-        const hostId = 'host_' + Date.now();
+        setState(prev => ({ ...prev, isLoading: true }));
+        
+        // 현재 로그인한 사용자의 UID를 hostId로 사용
+        const hostId = (window as any).firebaseAuthUid || `host_${Date.now()}`;
         const room = roomManager.createRoom(subject, isPublic, hostId);
+        
         // 기본 예시 문제 3개(OX/객관식/주관식)
         const now = Date.now();
         const defaultQuestions: Question[] = [
           {
-            id: 'q_' + now + '_ox',
+            id: `q_1_${now}`,
             type: 'ox',
             question: '태양은 서쪽에서 뜬다.',
             score: 10,
@@ -263,7 +277,7 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
             correctAnswer: 'X'
           },
           {
-            id: 'q_' + now + '_mc',
+            id: `q_2_${now}`,
             type: 'multiple',
             question: '대한민국의 수도는?',
             score: 20,
@@ -272,7 +286,7 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
             correctAnswer: 0
           },
           {
-            id: 'q_' + now + '_short',
+            id: `q_3_${now}`,
             type: 'short',
             question: '3 x 7 = ?',
             score: 30,
@@ -280,6 +294,20 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
             correctAnswer: '21'
           }
         ];
+
+        // Firestore에 방 생성 및 연결
+        await syncManager.createRoom(room);
+        
+        // 초기 게임 데이터 설정
+        await syncManager.updateGameData({ 
+          room, 
+          players: [], 
+          questions: defaultQuestions,
+          gameState: 'waiting',
+          currentQuestionIndex: 0,
+          hasStarted: false,
+          gameSettings: state.gameSettings
+        });
 
         setState(prev => ({ 
           ...prev, 
@@ -289,68 +317,34 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
           gameState: 'waiting',
           currentQuestionIndex: 0,
           hasStarted: false,
-          gameSettings: prev.gameSettings
+          gameSettings: prev.gameSettings,
+          isLoading: false
         }));
-        syncManager.updateGameData({ 
-          room, 
-          players: [], 
-          questions: defaultQuestions,
-          gameState: 'waiting',
-          currentQuestionIndex: 0,
-          hasStarted: false,
-          gameSettings: state.gameSettings
-        });
-        eventBus.emit('ROOM_CREATED', room);
         
-        console.log('🏠 방 생성 완료:', room.code);
+        eventBus.emit('ROOM_CREATED', room);
+        logger.debug('🔥 Firestore 방 생성 완료:', room.code);
       } catch (error) {
         console.error('방 생성 실패:', error);
-        setState(prev => ({ ...prev, error: '방 생성에 실패했습니다.' }));
+        setState(prev => ({ 
+          ...prev, 
+          error: '방 생성에 실패했습니다.',
+          isLoading: false 
+        }));
       }
     },
 
-    joinRoom: (roomCode: string, player: Player) => {
+    joinRoom: async (roomCode: string, player: Player) => {
       try {
-        // 상세 로그: 참여 시도 전 상태
-        try {
-          const before = {
-            at: new Date().toISOString(),
-            roomCode,
-            localRoomExists: !!roomManager.getRoom(roomCode),
-            publicRooms: roomManager.getPublicRooms().map(r => r.code),
-            playersCount: state.players.length
-          };
-          console.info('[JOIN_TRACE] before joinRoom', before);
-        } catch {}
+        // Firestore 방에 연결 후 참여 처리
+        await (syncManager as any).connectToRoom(roomCode);
+        await (syncManager as any).addPlayer(player);
 
-        const room = roomManager.joinRoom(roomCode, player);
-        
-        if (room) {
-          setState(prev => ({ 
-            ...prev, 
-            room, 
-            players: room.players,
-            error: null 
-          }));
-          
-          eventBus.emit('PLAYER_JOIN', player);
-          console.info('[JOIN_TRACE] success', { roomCode, playersCount: room.players.length });
-          return true;
-        } else {
-          setState(prev => ({ ...prev, error: '방을 찾을 수 없습니다.' }));
-          try {
-            const after = {
-              at: new Date().toISOString(),
-              roomCode,
-              localRoomExists: !!roomManager.getRoom(roomCode),
-              publicRooms: roomManager.getPublicRooms().map(r => r.code)
-            };
-            console.warn('[JOIN_TRACE] fail', after);
-          } catch {}
-          return false;
-        }
+        // 상태는 실시간 리스너에서 최신 데이터로 반영됨
+        eventBus.emit('PLAYER_JOIN', player);
+        logger.debug('[JOIN_TRACE] success (firestore)', { roomCode, player: player.nickname });
+        return true;
       } catch (error) {
-        console.error('방 참여 실패:', error);
+        console.error('방 참여 실패 (firestore):', error);
         setState(prev => ({ ...prev, error: '방 참여에 실패했습니다.' }));
         return false;
       }
@@ -392,6 +386,23 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
       });
     },
 
+    updateQuestion: (updatedQuestion: Question) => {
+      setState(prev => {
+        const newQuestions = prev.questions.map(q => 
+          q.id === updatedQuestion.id ? updatedQuestion : q
+        );
+        syncManager.updateGameData({
+          questions: newQuestions,
+          gameState: prev.gameState,
+          currentQuestionIndex: prev.currentQuestionIndex,
+          players: prev.players,
+          room: prev.room
+        } as any);
+        eventBus.emit('QUESTION_UPDATED', updatedQuestion);
+        return { ...prev, questions: newQuestions };
+      });
+    },
+
     deleteQuestion: (questionId: string) => {
       const newQuestions = state.questions.filter(q => q.id !== questionId);
       setState(prev => ({ ...prev, questions: newQuestions }));
@@ -411,28 +422,34 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      const isFirstStart = !state.hasStarted;
+      // finished 상태면 처음부터 + 점수 초기화
+      const isRestart = state.gameState === 'finished';
       let startIndex = 0;
-      if (isFirstStart) {
+      
+      if (isRestart || !state.hasStarted) {
+        // finished 또는 최초 시작: 처음부터
         startIndex = 0;
       } else {
-        const nextIndex = state.currentQuestionIndex + 1;
-        if (nextIndex >= state.questions.length) {
-          // 진행할 다음 문제가 없으면 대기 유지
+        // waiting 상태에서 재시작: 다음 문제부터 (완료된 문제 건너뛰기)
+        startIndex = state.currentQuestionIndex + 1;
+        if (startIndex >= state.questions.length) {
+          // 모든 문제 끝났고 추가된 문제가 없으면 시작 불가
+          logger.debug('[START] 진행할 문제가 없습니다', { currentIndex: state.currentQuestionIndex, total: state.questions.length });
           return;
         }
-        startIndex = nextIndex;
       }
 
       const resetPlayers = state.players.map(player => ({
         ...player,
+        score: isRestart ? 0 : player.score, // finished 재시작이면 점수 0, 아니면 유지
         hasSubmitted: false,
-        currentAnswer: undefined
+        currentAnswer: undefined,
+        isEliminated: isRestart ? false : player.isEliminated // finished 재시작이면 제거 해제
       }));
 
       const nowMs = Date.now();
       const newState = { gameState: 'playing' as const, currentQuestionIndex: startIndex, hasStarted: true, players: resetPlayers, phaseStartedAt: nowMs, phaseDuration: state.gameSettings.timeLimit, paused: false } as const;
-      console.info('[AUTO_FLOW] startGame', newState);
+      logger.debug('[AUTO_FLOW] startGame', newState);
       setState(prev => ({ ...prev, ...newState }));
       syncManager.updateGameData({
         gameState: 'playing',
@@ -460,29 +477,59 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
     },
 
     pauseGame: () => {
-      const newState = { gameState: 'paused' as const, paused: true } as const;
-      setState(prev => ({ ...prev, ...newState }));
-      syncManager.updateGameState(newState as any);
-      eventBus.emit('GAME_PAUSED', newState);
+      // 남은 시간을 고정하고, 전역 상태를 'paused'로 전환
+      const nowMs = Date.now();
+      const remain = state.phaseStartedAt && state.phaseDuration
+        ? Math.max(1, state.phaseDuration - Math.floor((nowMs - (state.phaseStartedAt || nowMs)) / 1000))
+        : (state.gameState === 'showingAnswer' ? state.gameSettings.answerRevealTime : state.gameSettings.timeLimit);
+      logger.debug('[PAUSE] prevState=', state.gameState, 'idx=', state.currentQuestionIndex, 'remain=', remain);
+      const next = {
+        gameState: 'paused' as const,
+        paused: true,
+        pausedPrevState: state.gameState,
+        // 기준점을 재설정해 정밀도를 확보 (재개 시 now 기준 비교가 되도록)
+        phaseStartedAt: nowMs,
+        phaseDuration: remain,
+        resumeGuardUntil: null
+      } as const;
+      setState(prev => ({ ...prev, ...next }));
+      syncManager.updateGameState(next as any);
+      eventBus.emit('GAME_PAUSED', next);
     },
 
     resumeGame: () => {
-      const newState = { gameState: 'playing' as const, paused: false } as const;
-      setState(prev => ({ ...prev, ...newState }));
-      syncManager.updateGameState(newState as any);
-      eventBus.emit('GAME_RESUMED', newState);
+      // 일시정지 해제: 'playing'으로 복귀하여 저장된 남은 시간을 기준으로 재시작
+      const nowMs = Date.now();
+      const remain = state.phaseDuration && state.phaseDuration > 0
+        ? state.phaseDuration
+        : (state.gameState === 'showingAnswer' ? state.gameSettings.answerRevealTime : state.gameSettings.timeLimit);
+      const restoredState: GameState = (state.pausedPrevState && state.pausedPrevState !== 'paused') ? state.pausedPrevState : 'playing';
+      logger.debug('[RESUME] restoredState=', restoredState, 'idx=', state.currentQuestionIndex, 'remain=', remain);
+      const next = {
+        gameState: restoredState,
+        paused: false,
+        pausedPrevState: null,
+        phaseStartedAt: nowMs,
+        phaseDuration: remain,
+        resumeGuardUntil: nowMs + 1200
+      } as const;
+      setState(prev => ({ ...prev, ...next }));
+      syncManager.updateGameState(next as any);
+      eventBus.emit('GAME_RESUMED', next);
     },
 
     nextQuestion: () => {
-      console.info('[AUTO_FLOW] nextQuestion called', { current: state.currentQuestionIndex, total: state.questions.length });
+      if (!isHost) return; // 호스트만 전이 수행
+      if (state.gameState !== 'showingAnswer') return; // showingAnswer 상태에서만 가능
+      logger.debug('[NEXT] nextQuestion called', { current: state.currentQuestionIndex, total: state.questions.length });
       const nextIndex = state.currentQuestionIndex + 1;
       
       if (nextIndex >= state.questions.length) {
-        // 자동 종료하지 않고 대기 상태로 전환. 인덱스는 마지막 문제에서 유지
+        // 마지막 문제 끝: waiting으로 전환 (finished는 명시적 종료 버튼으로만)
         const newState = { gameState: 'waiting' as const };
-        console.info('[AUTO_FLOW] no more questions → waiting', { lastIndex: state.currentQuestionIndex });
-        setState(prev => ({ ...prev, ...newState, currentQuestionIndex: Math.max(0, prev.currentQuestionIndex) }));
-        syncManager.updateGameData({ gameState: 'waiting', currentQuestionIndex: state.currentQuestionIndex, hasStarted: true });
+        logger.debug('[AUTO_FLOW] no more questions → waiting', { lastIndex: state.currentQuestionIndex });
+        setState(prev => ({ ...prev, ...newState }));
+        syncManager.updateGameData({ gameState: 'waiting', hasStarted: true } as any);
         return;
       }
 
@@ -495,7 +542,7 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
       const nowMs = Date.now();
       const newState = { gameState: 'playing' as const, currentQuestionIndex: nextIndex, players: resetPlayers, phaseStartedAt: nowMs, phaseDuration: state.gameSettings.timeLimit, paused: false } as const;
 
-      console.info('[AUTO_FLOW] move to next playing', newState);
+      logger.debug('[AUTO_FLOW] move to next playing', newState);
       setState(prev => ({ ...prev, ...newState }));
       syncManager.updateGameData({
         gameState: 'playing',
@@ -518,11 +565,19 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
 
     showAnswer: () => {
       const newState = { gameState: 'showingAnswer' as const };
-      console.info('[AUTO_FLOW] showAnswer called', { index: state.currentQuestionIndex });
+      if (!isHost) return; // 호스트만 정답 공개 수행 (참가자는 수신만)
+      if (state.gameState !== 'playing') return; // playing 상태에서만 가능
+      logger.debug('[ANSWER] showAnswer called', { index: state.currentQuestionIndex });
       // 최신 데이터로 채점(브로드캐스트 지연 보정)
       const latest = syncManager.getGameData();
       const q = latest.questions.find((qq: any) => qq.id === (latest as any).activeQuestionId) || latest.questions[latest.currentQuestionIndex];
       if (q) {
+        // 이미 채점된 문제인지 확인
+        if (latest.lastGradedQuestionId === q.id) {
+          console.debug('[AUTO_FLOW] already graded', { qid: q.id });
+          return;
+        }
+        
         console.debug('[AUTO_FLOW] grading begin', { qid: q.id, score: q.score });
         // 로컬 grade lock (탭 간 중복 방지)
         try {
@@ -531,6 +586,7 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
             const locked = localStorage.getItem(lockKey);
             if (locked === q.id) {
               console.warn('[AUTO_FLOW] grade locked by other tab', { qid: q.id });
+              return; // 중복 채점 방지를 위해 함수 종료
             } else {
               localStorage.setItem(lockKey, q.id);
             }
@@ -546,15 +602,42 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
           }
           return isCorrect ? { ...p, score: p.score + q.score } : p;
         });
+        // 변경된 점수만 추려 배치 업데이트 (대규모 인원 최적화)
+        const updates: { [pid: string]: Partial<Player> } = {} as any;
+        latest.players.forEach((p: any) => {
+          const after = gradedPlayers.find((gp: any) => gp.id === p.id);
+          if (!after) return;
+          if ((after.score || 0) !== (p.score || 0)) {
+            updates[p.id] = { score: after.score } as any;
+          }
+        });
         setState(prev => ({ ...prev, players: gradedPlayers }));
-        syncManager.updateGameData({ players: gradedPlayers, lastGradedQuestionId: q.id } as any);
+        if (Object.keys(updates).length > 0) {
+          syncManager.batchUpdatePlayers(updates).catch(() => {});
+        }
+        // 메타 필드만 별도로 업데이트
+        syncManager.updateGameData({ lastGradedQuestionId: q.id } as any);
         // 정오 결과를 즉시 브로드캐스트해 참여자 UI가 동일하게 반영
         syncManager.broadcast('FINALIZE_ANSWERS', { questionId: q.id, players: gradedPlayers });
         console.debug('[AUTO_FLOW] grading done + broadcast', { qid: q.id });
       }
+      // 호스트 원자 전이: 정답공개 전환과 동시에 미제출자 자동제출을 한 번에 처리
       const nowMs = Date.now();
+      const autoSubmit: any = {};
+      latest.players.forEach((p: any) => {
+        if (!p.isEliminated && !p.hasSubmitted) {
+          autoSubmit[`players.${p.id}.hasSubmitted`] = true;
+        }
+      });
+
       setState(prev => ({ ...prev, ...newState, phaseStartedAt: nowMs, phaseDuration: state.gameSettings.answerRevealTime, paused: false }));
-      syncManager.updateGameState({ ...newState, phaseStartedAt: nowMs, phaseDuration: state.gameSettings.answerRevealTime, paused: false } as any);
+      syncManager.updateGameState({
+        ...newState,
+        phaseStartedAt: nowMs,
+        phaseDuration: state.gameSettings.answerRevealTime,
+        paused: false,
+        ...autoSubmit
+      } as any);
       eventBus.emit('ANSWER_SHOWN', newState);
     },
 
@@ -590,7 +673,8 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
           : player
       );
       setState(prev => ({ ...prev, players: updatedPlayers }));
-      syncManager.updateGameData({ players: updatedPlayers });
+      // 부분 업데이트로 해당 플레이어만 전송
+      syncManager.updatePlayer(playerId, { hasSubmitted: true, currentAnswer: String(answer) } as any);
       eventBus.emit('ANSWER_SUBMITTED', { playerId, answer, players: updatedPlayers });
     },
 
@@ -619,6 +703,30 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
     updateHostActivity: (roomCode: string) => {
       roomManager.updateHostActivity(roomCode, 'current_session');
       syncManager.broadcast('HOST_ACTIVITY', { roomCode, sessionId: 'current_session' });
+    },
+
+    adjustTime: (delta: number) => {
+      if (!isHost) return; // 호스트만 조정 가능
+      if (state.gameState !== 'playing' && state.gameState !== 'showingAnswer' && state.gameState !== 'paused') return;
+      
+      // 현재 남은 시간 계산
+      const nowMs = Date.now();
+      const elapsed = state.phaseStartedAt ? Math.floor((nowMs - state.phaseStartedAt) / 1000) : 0;
+      const currentRemain = Math.max(0, (state.phaseDuration || 0) - elapsed);
+      
+      // 새로운 남은 시간 (최소 1초)
+      const newRemain = Math.max(1, currentRemain + delta);
+      
+      // phaseStartedAt을 현재 시간으로, phaseDuration을 새로운 남은 시간으로 재설정
+      const updates = {
+        phaseStartedAt: nowMs,
+        phaseDuration: newRemain
+      };
+      
+      logger.debug('[ADJUST_TIME] delta=', delta, 'currentRemain=', currentRemain, 'newRemain=', newRemain);
+      
+      setState(prev => ({ ...prev, ...updates }));
+      syncManager.updateGameState(updates as any);
     }
   };
 

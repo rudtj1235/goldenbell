@@ -44,7 +44,7 @@
 
 .modal-header h2 {
   margin: 0;
-  color: #333;
+  color: #111;
   font-size: 1.5rem;
 }
 
@@ -75,28 +75,30 @@
 
 .question-type-tabs {
   display: flex;
-  background: #f8f9fa;
+  background: rgba(255,255,255,0.85);
   border-radius: 10px;
   padding: 5px;
   margin-bottom: 25px;
+  border: 1px solid #e9ecef;
 }
 
 .type-tab {
   flex: 1;
   padding: 12px 20px;
-  border: none;
+  border: 1px solid transparent;
   background: transparent;
   color: #6c757d;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
   border-radius: 8px;
-  transition: all 0.3s ease;
+  transition: all 0.2s ease;
 }
 
 .type-tab.active {
-  background: white;
-  color: #667eea;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  background: rgba(255,193,7,0.9);
+  color: #111;
+  border-color: #e9ecef;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
 }
 
 .type-tab:hover:not(.active) {
@@ -133,7 +135,7 @@
 .form-group input:focus,
 .form-group textarea:focus {
   outline: none;
-  border-color: #667eea;
+  border-color: #ffb000;
 }
 
 .form-group textarea {
@@ -175,9 +177,9 @@
 }
 
 .ox-option:has(input:checked) {
-  background: #667eea;
-  color: white;
-  border-color: #667eea;
+  background: rgba(255,193,7,0.9);
+  color: #111;
+  border-color: #e9ecef;
 }
 
 .ox-option input[type="radio"] {
@@ -201,14 +203,14 @@
 }
 
 .add-option-btn {
-  background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
-  color: white;
-  border: none;
+  background: rgba(255,193,7,0.9);
+  color: #111;
+  border: 1px solid #e9ecef;
   padding: 8px 16px;
   border-radius: 20px;
   cursor: pointer;
   font-size: 0.9rem;
-  font-weight: 600;
+  font-weight: 700;
   transition: transform 0.2s ease;
 }
 
@@ -248,14 +250,15 @@
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: #667eea;
-  color: white;
+  background: rgba(255,224,138,0.9);
+  color: #111;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-weight: 600;
+  font-weight: 700;
   font-size: 0.9rem;
   flex-shrink: 0;
+  border: 1px solid #e9ecef;
 }
 
 .option-item input[type="text"] {
@@ -277,8 +280,8 @@
   align-items: center;
   gap: 5px;
   cursor: pointer;
-  font-weight: 600;
-  color: #28a745;
+  font-weight: 700;
+  color: #111;
   flex-shrink: 0;
 }
 
@@ -331,18 +334,18 @@
   transition: all 0.3s ease;
 }
 
-.cancel-btn {
-  background: #6c757d;
-  color: white;
-}
+.modal-footer .cancel-btn { background: rgba(255,224,138,0.9); color: #111; border: 1px solid #e9ecef; }
+.modal-footer .submit-btn { background: rgba(255,193,7,0.9); color: #111; border: 1px solid #e9ecef; }
+.multiple-section .option-number { background: rgba(255,224,138,0.9); color: #111; border: 1px solid #e9ecef; }
 
 .cancel-btn:hover {
   background: #5a6268;
 }
 
 .submit-btn {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
+  background: rgba(255,193,7,0.9);
+  color: #111;
+  border: 1px solid #e9ecef;
 }
 
 .submit-btn:hover {

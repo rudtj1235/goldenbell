@@ -228,11 +228,10 @@ const GameHost: React.FC = () => {
           ) : currentQuestion ? (
             <div className="question-display">
               <div className="question-header">
-                <span className="question-type">
-                  {currentQuestion.type === 'ox' ? 'OX 문제' :
-                   currentQuestion.type === 'multiple' ? '객관식' : '주관식'}
+                <span className="badge badge--neutral">
+                  {currentQuestion.type === 'ox' ? 'OX' : currentQuestion.type === 'multiple' ? '객관식' : '단답형'}
                 </span>
-                <span className="question-score">{currentQuestion.score}점</span>
+                <span className="badge badge--warn">{currentQuestion.score}점</span>
               </div>
               
               <h2 className="question-text">{currentQuestion.question}</h2>

@@ -5,6 +5,7 @@ import './QuestionStack.css';
 interface QuestionStackProps {
   questions: Question[];
   onDelete: (questionId: string) => void;
+  onEdit?: (question: Question) => void;
   onReorder: (reorderedQuestions: Question[]) => void;
   currentIndex: number;
   gameState: GameState;
@@ -14,6 +15,7 @@ interface QuestionStackProps {
 const QuestionStack: React.FC<QuestionStackProps> = ({
   questions,
   onDelete,
+  onEdit,
   onReorder,
   currentIndex,
   gameState,
@@ -109,12 +111,11 @@ const QuestionStack: React.FC<QuestionStackProps> = ({
   };
 
   const getQuestionStatus = (index: number): 'upcoming' | 'current' | 'completed' => {
-    if (gameState === 'waiting') {
-      // 게임 시작 이후 대기 상태에서는 진행된 문제는 완료로 유지
-      if (hasStarted) {
-        return index <= currentIndex ? 'completed' : 'upcoming';
-      }
-      return 'upcoming';
+    if (gameState === 'waiting' || gameState === 'finished') {
+      // 게임 시작 전에는 모두 upcoming
+      if (!hasStarted) return 'upcoming';
+      // 게임 진행 중 waiting/finished 상태에서는 현재 문제까지 완료
+      return index <= currentIndex ? 'completed' : 'upcoming';
     }
     if (index < currentIndex) return 'completed';
     if (index === currentIndex) return 'current';
@@ -146,6 +147,7 @@ const QuestionStack: React.FC<QuestionStackProps> = ({
             return (
               <div
                 key={question.id}
+                data-question-id={question.id}
                 className={`question-card ${status} ${isDragging ? 'dragging' : ''} ${isDragOver ? 'drag-over' : ''} ${isDragOver && dragOverPosition==='before' ? 'insertion-before' : ''} ${isDragOver && dragOverPosition==='after' ? 'insertion-after' : ''}`}
                 draggable={gameState === 'waiting' && status !== 'completed'}
                 onDragStart={(e) => handleDragStart(e, index)}
@@ -156,10 +158,10 @@ const QuestionStack: React.FC<QuestionStackProps> = ({
               >
                 <div className="question-header">
                   <div className="question-number">문제 {index + 1}</div>
-                  <div className="question-type">
-                    {getQuestionTypeText(question.type)}
+                  <div className="badge badge--neutral">
+                    {question.type === 'ox' ? 'OX' : question.type === 'multiple' ? '객관식' : '단답형'}
                   </div>
-                  <div className="question-score">{question.score}점</div>
+                  <div className="badge badge--warn">{question.score}점</div>
                 </div>
                 
                 <div className="question-content">
@@ -187,14 +189,37 @@ const QuestionStack: React.FC<QuestionStackProps> = ({
                 </div>
                 
                 <div className="question-footer">
-                  {gameState === 'waiting' && status !== 'completed' && (
-                    <button
-                      className="delete-question-btn"
-                      onClick={() => onDelete(question.id)}
-                      title="문제 삭제"
-                    >
-                      🗑️
-                    </button>
+                  {/* 현재 진행 중인 문제가 아니면 수정/삭제 버튼 표시 */}
+                  {status !== 'current' && (
+                    <div className="question-actions">
+                      {status !== 'completed' && onEdit && (
+                        <button
+                          className="edit-question-btn"
+                          onClick={() => onEdit(question)}
+                          title="문제 수정"
+                        >
+                          수정
+                        </button>
+                      )}
+                      <button
+                        className="delete-question-btn"
+                        onClick={() => {
+                          if (status !== 'completed') {
+                            // 미완료 문제는 실제 삭제
+                            onDelete(question.id);
+                          } else {
+                            // 완료된 문제는 화면에서만 숨기기
+                            const questionCard = document.querySelector(`[data-question-id="${question.id}"]`) as HTMLElement;
+                            if (questionCard) {
+                              questionCard.style.display = 'none';
+                            }
+                          }
+                        }}
+                        title="문제 삭제"
+                      >
+                        삭제
+                      </button>
+                    </div>
                   )}
                 </div>
                 
@@ -217,7 +242,7 @@ const QuestionStack: React.FC<QuestionStackProps> = ({
       
       {questions.length > 0 && gameState === 'waiting' && (
         <div className="stack-help">
-          <p>💡 문제를 드래그하여 순서를 변경할 수 있습니다</p>
+          <p>문제를 드래그하여 순서를 변경할 수 있습니다</p>
         </div>
       )}
     </div>

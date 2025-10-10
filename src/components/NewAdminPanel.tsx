@@ -5,24 +5,30 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Question, GameSettings, QuestionType } from '../types/game';
+import { Question, GameSettings, QuestionType, Player } from '../types/game';
 import { useNewGameContext } from '../contexts/NewGameContext';
-import Avatar from 'avataaars2';
+import AvatarDisplay from './AvatarDisplay';
+// import syncManager from '../services/SyncManager'; // 사용하지 않음
 import QuestionModal from './QuestionModal';
+import EditQuestionModal from './EditQuestionModal';
 import QuestionStack from './QuestionStack';
 import eventBus from '../services/EventBus';
 import roomManager from '../services/RoomManager';
-import syncManager from '../services/SyncManager';
+import { firestoreSyncManager as syncManagerFs } from '../services/FirestoreSyncManager';
+import Toast from './Toast';
 import './AdminPanel.css';
+import './GameHost.css'; // player-card 스타일을 위해 추가
 import LeaderboardModal from './Leaderboard';
 import AiQuestionModal from './AiQuestionModal';
 import { AiQuestion } from '../services/ai';
 
 const NewAdminPanel: React.FC = () => {
   const [showQuestionModal, setShowQuestionModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingQuestion, setEditingQuestion] = useState<Question | null>(null);
   const { state, actions } = useNewGameContext();
   const navigate = useNavigate();
-
+  
   const { 
     room, 
     questions, 
@@ -33,12 +39,71 @@ const NewAdminPanel: React.FC = () => {
     hasStarted,
     isLoading
   } = state;
+  
+  // finished 상태도 그대로 표시 (UI 유지)
+  const adminGameState = gameState;
+  const adminPlayers = players;
+  
+  // 버튼 입력 최소 간격 (1초)
+  const lastActionTimeRef = useRef<number>(0);
+  
+  const canPerformAction = () => {
+    const now = Date.now();
+    if (now - lastActionTimeRef.current < 1000) {
+      return false;
+    }
+    lastActionTimeRef.current = now;
+    return true;
+  };
 
-  // 호스트 활동 주기적 업데이트
+  // 브라우저 닫을 때 방 정리
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (room) {
+        try {
+          syncManagerFs.deleteRoom();
+        } catch (e) {
+          console.error('방 삭제 실패:', e);
+        }
+      }
+    };
+    
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [room]);
+
+  // 호스트 활동 주기적 업데이트 및 방 자동 복구
   useEffect(() => {
     if (!room) {
       // 초기 하이드레이션 중에는 리다이렉트하지 않음
       if (isLoading) return;
+      
+      // 로그인한 사용자가 만든 방이 있는지 확인하여 자동 복구
+      const tryAutoReconnect = async () => {
+        try {
+          const currentUid = (window as any).firebaseAuthUid;
+          if (!currentUid) return;
+          
+          // Firestore에서 현재 사용자가 호스트인 방 찾기
+          const { collection, query, where, getDocs } = await import('firebase/firestore');
+          const { db } = await import('../config/firebase');
+          
+          const roomsRef = collection(db, 'game_rooms');
+          const q = query(roomsRef, where('room.hostId', '==', currentUid));
+          const snap = await getDocs(q);
+          
+          if (!snap.empty) {
+            const roomDoc = snap.docs[0];
+            const roomData = roomDoc.data();
+            await (syncManagerFs as any).connectToRoom(roomDoc.id);
+            console.log('🔄 자동 방 복구:', roomDoc.id);
+          }
+        } catch (e) {
+          console.warn('방 자동 복구 실패:', e);
+        }
+      };
+      
+      tryAutoReconnect();
       return;
     }
 
@@ -75,15 +140,20 @@ const NewAdminPanel: React.FC = () => {
   // 진행 로직은 컨텍스트에서 단일 스케줄러가 담당하므로, 관리자 페이지에서는 보조 타이머를 두지 않습니다.
 
   const handlePlayerJoin = (player: any) => {
-    console.log('👤 새 참여자:', player.nickname);
+    const msg = { message: `👤 ${player.nickname} 님이 참여했습니다.`, type: 'info' };
+    syncManagerFs.broadcast('SYSTEM_MESSAGE', msg);
   };
 
   const handlePlayerLeave = (playerId: string) => {
-    console.log('👤 참여자 퇴장:', playerId);
+    const player = adminPlayers.find(p => p.id === playerId);
+    if (player) {
+      const msg = { message: `👋 ${player.nickname} 님이 퇴장했습니다.`, type: 'warning' };
+      syncManagerFs.broadcast('SYSTEM_MESSAGE', msg);
+    }
   };
 
   const handleGameStateChange = (data: any) => {
-    console.log('🎮 게임 상태 변경:', data);
+    // 상태 변경 처리
   };
 
   const handleRoomDeleted = (roomCode: string) => {
@@ -94,7 +164,14 @@ const NewAdminPanel: React.FC = () => {
   };
 
   const handleDeleteQuestion = (questionId: string) => {
+    // 낙관적 업데이트: UI에서 즉시 삭제
     actions.deleteQuestion(questionId);
+    
+    // Toast는 별도 처리 (Firestore 충돌 방지)
+    setTimeout(() => {
+      const msg = { message: '🗑️ 문제가 삭제되었습니다.', type: 'info' };
+      syncManagerFs.broadcast('SYSTEM_MESSAGE', msg);
+    }, 100);
   };
 
   const handleReorderQuestions = (reorderedQuestions: Question[]) => {
@@ -102,27 +179,63 @@ const NewAdminPanel: React.FC = () => {
   };
 
   const handleStartGame = () => {
+    if (!canPerformAction()) return;
     if (questions.length === 0) {
       alert('문제를 먼저 추가해주세요.');
       return;
     }
     actions.startGame();
+    
+    const msg = { message: '🎮 게임이 시작되었습니다!', type: 'success' };
+    syncManagerFs.broadcast('SYSTEM_MESSAGE', msg);
   };
 
   const handlePauseGame = () => {
+    if (!canPerformAction()) return;
     actions.pauseGame();
+    
+    const remain = state.phaseDuration || 0;
+    const msg = { message: `⏸️ 게임이 일시정지되었습니다. (남은 시간: ${remain}초)`, type: 'warning' };
+    syncManagerFs.broadcast('SYSTEM_MESSAGE', msg);
   };
 
   const handleResumeGame = () => {
+    if (!canPerformAction()) return;
     actions.resumeGame();
+    
+    const remain = state.phaseDuration || 0;
+    const msg = { message: `▶️ 게임이 재개되었습니다. (남은 시간: ${remain}초)`, type: 'info' };
+    syncManagerFs.broadcast('SYSTEM_MESSAGE', msg);
+  };
+
+  const handleEndGame = () => {
+    if (!canPerformAction()) return;
+    if (!window.confirm('게임을 종료하시겠습니까?')) return;
+    
+    actions.endGame();
+    
+    const msg = { message: '🏁 게임이 종료되었습니다!', type: 'success' };
+    syncManagerFs.broadcast('SYSTEM_MESSAGE', msg);
   };
 
   const handleSubmitQuestion = () => {
+    if (!canPerformAction()) return;
+    
+    const nextIndex = currentQuestionIndex + 1;
     actions.nextQuestion();
+    
+    if (nextIndex < questions.length) {
+      const msg = { message: `➡️ 다음 문제로 넘어갑니다. (${nextIndex + 1}/${questions.length})`, type: 'info' };
+      syncManagerFs.broadcast('SYSTEM_MESSAGE', msg);
+    }
   };
 
   const handleRevealAnswer = () => {
+    if (!canPerformAction()) return;
     actions.showAnswer();
+    
+    const msg = { message: '✅ 정답이 공개되었습니다!', type: 'success' };
+    syncManagerFs.broadcast('SYSTEM_MESSAGE', msg);
   };
 
   const handleGameSettingsChange = (newSettings: Partial<GameSettings>) => {
@@ -228,6 +341,21 @@ const NewAdminPanel: React.FC = () => {
         const missing = Object.entries(idx).filter(([,v]) => v < 0).map(([k]) => k);
         if (missing.length) throw new Error('누락된 컬럼: ' + missing.join(', '));
 
+        // CSV 업로드 시에도 연속된 번호 적용
+        const getNextQuestionNumber = (): number => {
+          if (questions.length === 0) return 1;
+          
+          const existingNumbers = questions
+            .map(q => {
+              const match = q.id.match(/^q_(\d+)_/);
+              return match ? parseInt(match[1], 10) : 0;
+            })
+            .filter(num => num > 0);
+          
+          return existingNumbers.length > 0 ? Math.max(...existingNumbers) + 1 : 1;
+        };
+
+        let nextNumber = getNextQuestionNumber();
         const imported: Question[] = rows.slice(1).map((r) => {
           const rawType = r[idx.type] || '';
           const type = (String(rawType).toLowerCase() as QuestionType);
@@ -249,8 +377,9 @@ const NewAdminPanel: React.FC = () => {
               correctAnswer = found >= 0 ? found : 0;
             }
           }
+          
           return {
-            id: 'q_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+            id: `q_${nextNumber++}_${Date.now()}`,
             type,
             question,
             score,
@@ -263,8 +392,28 @@ const NewAdminPanel: React.FC = () => {
         if (imported.length === 0) throw new Error('유효한 문제가 없습니다.');
 
         if (!window.confirm(`현재 문제를 ${imported.length}개의 항목으로 교체하시겠습니까?`)) return;
+        
+        // 문제 교체 및 게임 상태 초기화
         actions.reorderQuestions(imported);
-        alert(`문제 ${imported.length}개를 불러왔습니다.`);
+        
+        // CSV 업로드 시에는 완료 상태를 초기화하기 위해 hasStarted를 false로 설정
+        if (hasStarted) {
+          syncManagerFs.updateGameData({
+            questions: imported,
+            gameState: 'waiting',
+            currentQuestionIndex: 0,
+            hasStarted: false, // 이것이 핵심!
+            paused: false,
+            players: state.players,
+            room: state.room,
+            gameSettings: state.gameSettings,
+            phaseStartedAt: null,
+            phaseDuration: null
+          } as any);
+        }
+        
+        const msg = { message: `📄 CSV에서 ${imported.length}개의 문제를 불러왔습니다!`, type: 'success' };
+        syncManagerFs.broadcast('SYSTEM_MESSAGE', msg);
       } catch (err: any) {
         console.error('문제 업로드 실패:', err);
         alert('업로드에 실패했습니다: ' + (err?.message || String(err)));
@@ -280,22 +429,85 @@ const NewAdminPanel: React.FC = () => {
     window.open('/game-host', '_blank');
   };
 
-  const handleBackToMain = () => {
-    // 방 삭제 후 메인으로 이동
-    if (room) {
-      roomManager.deleteRoom(room.code);
+  const handleBackToMain = async () => {
+    // 방 삭제 후 메인으로 이동 (Firestore 삭제)
+    try {
+      if (room) {
+        await syncManagerFs.deleteRoom();
+      }
+    } catch (e) {
+      console.error('방 삭제 실패:', e);
+    } finally {
+      actions.resetGame();
+      navigate('/');
     }
-    actions.resetGame();
-    navigate('/');
   };
 
   const handleQuestionSubmit = (question: Omit<Question, 'id'>) => {
+    // 다음 문제 번호 계산 (기존 문제들의 최대 번호 + 1)
+    const getNextQuestionNumber = (): number => {
+      if (questions.length === 0) return 1;
+      
+      // 기존 문제 ID에서 번호 추출 (q_숫자_ 형태)
+      const existingNumbers = questions
+        .map(q => {
+          const match = q.id.match(/^q_(\d+)_/);
+          return match ? parseInt(match[1], 10) : 0;
+        })
+        .filter(num => num > 0);
+      
+      // 최대 번호 + 1 반환
+      return existingNumbers.length > 0 ? Math.max(...existingNumbers) + 1 : 1;
+    };
+
+    const nextNumber = getNextQuestionNumber();
     const newQuestion: Question = {
-      id: 'q_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+      id: `q_${nextNumber}_${Date.now()}`,
       ...question,
     };
     actions.addQuestion(newQuestion);
     setShowQuestionModal(false);
+    const msg = { message: '✅ 문제가 추가되었습니다.', type: 'success' };
+    syncManagerFs.broadcast('SYSTEM_MESSAGE', msg);
+  };
+
+  const handleEditQuestion = (question: Question) => {
+    setEditingQuestion(question);
+    setShowEditModal(true);
+  };
+
+  const handleEditSubmit = (updatedQuestion: Question) => {
+    actions.updateQuestion(updatedQuestion);
+    setShowEditModal(false);
+    setEditingQuestion(null);
+    const msg = { message: '✏️ 문제가 수정되었습니다.', type: 'success' };
+    syncManagerFs.broadcast('SYSTEM_MESSAGE', msg);
+  };
+
+  // 팀별 정렬 함수
+  const sortPlayersByTeam = (players: Player[]): Player[] => {
+    return [...players].sort((a, b) => {
+      // 1. 팀별 정렬 (개인 → A → B → C → ... → H)
+      const getTeamOrder = (team?: string): number => {
+        if (!team) return 0; // 개인전이 가장 앞
+        return team.charCodeAt(0) - 64; // A=1, B=2, C=3, ...
+      };
+      
+      const teamOrderA = getTeamOrder(a.team);
+      const teamOrderB = getTeamOrder(b.team);
+      
+      if (teamOrderA !== teamOrderB) {
+        return teamOrderA - teamOrderB;
+      }
+      
+      // 2. 같은 팀 내에서는 점수 순
+      if (a.team === b.team) {
+        return b.score - a.score;
+      }
+      
+      // 3. 개인전끼리는 점수 순
+      return b.score - a.score;
+    });
   };
 
   if (!room) {
@@ -311,116 +523,236 @@ const NewAdminPanel: React.FC = () => {
 
   return (
     <div className="admin-panel">
+      <Toast />
       <header className="admin-header">
-        <button className="back-btn" onClick={handleBackToMain}>
-          ← 뒤로가기
-        </button>
+        <div className="header-left">
+          <button className="btn btn--light" onClick={handleBackToMain}>
+            나가기
+          </button>
+        </div>
         <div className="room-info">
-          <h1>골든벨 관리자</h1>
+          <h1>골든벨 관리자 페이지</h1>
           <div className="room-details">
-            <span className="room-code">방 코드: <strong>{room.code}</strong></span>
-            <span className="room-subject">주제: {room.subject}</span>
-            <span className="room-type">
-              {room.isPublic ? '🌐 공개방' : '🔒 비공개방'}
+            <span className="badge badge--neutral">방 코드: <strong>{room.code}</strong></span>
+            <span className="badge badge--neutral">주제: {room.subject}</span>
+            <span className="badge badge--neutral">
+              {room.isPublic ? '공개방' : '비공개방'}
             </span>
           </div>
+        </div>
+        <div className="header-actions">
+          <button 
+            className="btn btn--light" 
+            onClick={handleOpenGameHost}
+            disabled={!room}
+          >
+            진행페이지 열기
+          </button>
         </div>
       </header>
 
       <div className="admin-content">
-        <button 
-          className="open-host-floating" 
-          onClick={handleOpenGameHost}
-          disabled={!room}
-        >
-          진행페이지 열기
-        </button>
+        {/* 진행페이지 버튼은 헤더 우측 고정으로 이동 */}
         <div className="left-panel">
           <div className="control-section">
             <h3>게임 제어</h3>
-            <div className="control-buttons">
-              {/* 시작 / 일시정지 / 넘어가기 / 종료 순서, 시작 전에는 일시정지/넘어가기 비활성 */}
+            <div className="control-buttons" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8 }}>
               <button 
-                className="start-btn control-btn" 
+                className="btn btn--y-gold" 
                 onClick={handleStartGame}
-                disabled={questions.length === 0 || gameState === 'playing' || gameState === 'showingAnswer'}
+                disabled={questions.length === 0 || !(adminGameState === 'waiting' || adminGameState === 'finished')}
               >
-                {hasStarted ? '다시 시작' : '시작'}
+                시작
               </button>
 
-              <button className="pause-btn control-btn" onClick={handlePauseGame} disabled={!(gameState === 'playing' || gameState === 'showingAnswer')}>
-                일시정지
+              <button 
+                className="btn btn--y-sunset" 
+                onClick={adminGameState === 'paused' ? handleResumeGame : handlePauseGame}
+                disabled={!(adminGameState === 'playing' || adminGameState === 'showingAnswer' || adminGameState === 'paused')}
+              >
+                {adminGameState === 'paused' ? '재개' : '일시정지'}
               </button>
 
-              <div className="time-controls">
-                <input type="number" placeholder="시간" className="time-input"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      const v = parseInt((e.target as HTMLInputElement).value);
-                      if (!isNaN(v)) {
-                        if (gameState === 'playing' || gameState === 'showingAnswer' || gameState === 'paused') {
-                          eventBus.emit('ADJUST_TIME', v);
-                          syncManager.broadcast('ADJUST_TIME', v);
-                        }
-                        (e.target as HTMLInputElement).value = '';
-                      }
-                    }
-                  }}
-                />
-                <span className={`time-unit ${!(gameState === 'playing' || gameState === 'showingAnswer' || gameState === 'paused') ? 'disabled' : ''}`}>(초)</span>
-                <button className="control-btn" onClick={() => { eventBus.emit('ADJUST_TIME', 5); syncManager.broadcast('ADJUST_TIME', 5); }} disabled={!(gameState === 'playing' || gameState === 'showingAnswer' || gameState === 'paused')}>+</button>
-                <button className="control-btn" onClick={() => { eventBus.emit('ADJUST_TIME', -5); syncManager.broadcast('ADJUST_TIME', -5); }} disabled={!(gameState === 'playing' || gameState === 'showingAnswer' || gameState === 'paused')}>-</button>
-              </div>
-
-              <button className="submit-btn control-btn" onClick={() => {
-                if (gameState === 'playing') {
-                  actions.showAnswer();
-                } else if (gameState === 'showingAnswer') {
-                  actions.nextQuestion();
-                }
-              }} disabled={!(gameState === 'playing' || gameState === 'showingAnswer')}>
-                넘어가기
-              </button>
-
-              <button className="control-btn" onClick={() => actions.endGame()}>
+              <button 
+                className="btn btn--y-butter" 
+                onClick={handleEndGame}
+                disabled={!hasStarted}
+              >
                 종료
               </button>
 
+              <div className="time-controls">
+                <input
+                  type="number"
+                  placeholder="시간(초)"
+                  className="input"
+                  min={1}
+                  defaultValue={10}
+                  style={{ width: '80px' }}
+                  id="time-adjust-input"
+                  onInput={(e) => {
+                    const el = e.target as HTMLInputElement;
+                    const n = parseInt(el.value || '');
+                    if (isNaN(n) || n < 1) {
+                      el.value = '1';
+                    }
+                  }}
+                />
+                <span className={`time-unit ${!(adminGameState === 'playing' || adminGameState === 'showingAnswer' || adminGameState === 'paused') ? 'disabled' : ''}`}>(초)</span>
+                <button 
+                  className="btn btn--y-light" 
+                  onClick={() => { 
+                    if (adminGameState === 'playing' || adminGameState === 'showingAnswer' || adminGameState === 'paused') {
+                      const input = document.getElementById('time-adjust-input') as HTMLInputElement;
+                      const value = parseInt(input?.value || '10');
+                      actions.adjustTime?.(value);
+                      
+                      const elapsed = state.phaseStartedAt ? Math.floor((Date.now() - state.phaseStartedAt) / 1000) : 0;
+                      const currentRemain = Math.max(0, (state.phaseDuration || 0) - elapsed);
+                      const newRemain = Math.max(1, currentRemain + value);
+                      const msg = { message: `⏱️ 시간이 ${value}초 추가되었습니다. (남은 시간: ${newRemain}초)`, type: 'info' };
+                      syncManagerFs.broadcast('SYSTEM_MESSAGE', msg);
+                    }
+                  }} 
+                  disabled={!(adminGameState === 'playing' || adminGameState === 'showingAnswer' || adminGameState === 'paused')}
+                >+</button>
+                <button 
+                  className="btn btn--y-light" 
+                  onClick={() => { 
+                    if (adminGameState === 'playing' || adminGameState === 'showingAnswer' || adminGameState === 'paused') {
+                      const input = document.getElementById('time-adjust-input') as HTMLInputElement;
+                      const value = parseInt(input?.value || '10');
+                      actions.adjustTime?.(-value);
+                      
+                      const elapsed = state.phaseStartedAt ? Math.floor((Date.now() - state.phaseStartedAt) / 1000) : 0;
+                      const currentRemain = Math.max(0, (state.phaseDuration || 0) - elapsed);
+                      const newRemain = Math.max(1, currentRemain - value);
+                      const msg = { message: `⏱️ 시간이 ${value}초 감소되었습니다. (남은 시간: ${newRemain}초)`, type: 'info' };
+                      syncManagerFs.broadcast('SYSTEM_MESSAGE', msg);
+                    }
+                  }} 
+                  disabled={!(adminGameState === 'playing' || adminGameState === 'showingAnswer' || adminGameState === 'paused')}
+                >-</button>
+              </div>
+
+              <button className="btn btn--y-sunset" onClick={() => {
+                if (adminGameState === 'playing') {
+                  handleRevealAnswer();
+                } else if (adminGameState === 'showingAnswer') {
+                  handleSubmitQuestion();
+                }
+              }} disabled={!(adminGameState === 'playing' || adminGameState === 'showingAnswer')}>
+                넘기기
+              </button>
+
               <button 
-                className="leaderboard-btn" 
+                className="btn btn--y-gold" 
                 onClick={handleShowLeaderboard}
               >
-                순위
+                순위 보기
               </button>
+            </div>
+          </div>
+
+          <div className="settings-section">
+            <h3>기본 설정</h3>
+            <div className="settings-grid" style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
+              <div className="setting-item">
+                <div className="setting-row">
+                  <span className="badge badge--y-light">문제 제시(초)</span>
+                  <input
+                    className="input"
+                    type="number"
+                    value={gameSettings.timeLimit}
+                    min={1}
+                    max={300}
+                    onChange={(e) => handleGameSettingsChange({ timeLimit: Math.max(1, parseInt(e.target.value) || 1) })}
+                  />
+                </div>
+              </div>
+              <div className="setting-item">
+                <div className="setting-row">
+                  <span className="badge badge--y-sunset">정답 공개(초)</span>
+                  <input
+                    className="input"
+                    type="number"
+                    value={gameSettings.answerRevealTime}
+                    min={1}
+                    max={120}
+                    onChange={(e) => handleGameSettingsChange({ answerRevealTime: Math.max(1, parseInt(e.target.value) || 1) })}
+                  />
+                </div>
+              </div>
+              <div className="setting-item">
+                <div className="setting-row">
+                  <span className="badge badge--y-butter">수동 모드</span>
+                  <div className="fill">
+                    <label className="checkbox-label checkbox-lg">
+                      <input
+                        type="checkbox"
+                        checked={!gameSettings.autoMode}
+                        onChange={(e) => handleGameSettingsChange({ autoMode: !e.target.checked })}
+                      />
+                    </label>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
           {/* 실시간 참여자 현황 */}
           <div className="participants-section">
             <h3>실시간 참여자 현황</h3>
-            {players.length === 0 ? (
+            {adminPlayers.length === 0 ? (
               <div className="no-participants">
-                <p>🎯 아직 참여자가 없습니다</p>
+                <p>아직 참여자가 없습니다</p>
                 <small>방 코드: <strong>{room.code}</strong>를 공유해주세요</small>
               </div>
             ) : (
-              <div className="participants-list">
-                {players.map(player => (
-                  <div key={player.id} className="participant-item">
-                    <div className="participant-avatar">
-                      <Avatar {...player.avatar} />
+              <div className="players-grid">
+                {sortPlayersByTeam(adminPlayers).map(player => {
+                  const getTeamBg = (team?: string): string => {
+                    if (!team) return 'rgba(255,255,255,0.85)';
+                    const teamColors: { [key: string]: string } = {
+                      'A': 'rgba(244,67,54,0.20)',
+                      'B': 'rgba(255,152,0,0.20)', 
+                      'C': 'rgba(255,235,59,0.20)',
+                      'D': 'rgba(76,175,80,0.20)',
+                      'E': 'rgba(33,150,243,0.20)',
+                      'F': 'rgba(63,81,181,0.20)', 
+                      'G': 'rgba(156,39,176,0.20)',
+                      'H': 'rgba(158,158,158,0.20)'
+                    };
+                    return teamColors[team] || 'rgba(255,255,255,0.85)';
+                  };
+
+                  return (
+                    <div key={player.id} className="player-card">
+                      <div className="player-avatar" style={{ background: getTeamBg(player.team) }}>
+                        <div 
+                          className="avatar-background"
+                          style={{ backgroundColor: getTeamBg(player.team) }}
+                        >
+                          <AvatarDisplay avatar={player.avatar} size={50} />
+                        </div>
+                        {player.isEliminated && (
+                          <div className="eliminated-overlay">❌</div>
+                        )}
+                      </div>
+                      <div className="player-info">
+                        <div className="row-top">
+                          <span className="player-name">{player.nickname}</span>
+                          {player.team && <span className="player-team">{player.team}팀</span>}
+                        </div>
+                        <div className="row-bottom">
+                          <span className="player-score" style={{ backgroundColor: getTeamBg(player.team) }}>
+                            {player.score || 0}점
+                          </span>
+                        </div>
+                      </div>
                     </div>
-                    <div className="participant-info">
-                      <span className="participant-name">{player.nickname}</span>
-                      <span className="participant-team">
-                        {player.team || '개인'} {player.team ? '팀' : ''}
-                      </span>
-                      <span className="participant-status">
-                        {player.isEliminated ? '❌ 탈락' : '✅ 참여중'}
-                      </span>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -428,82 +760,45 @@ const NewAdminPanel: React.FC = () => {
 
         <div className="right-panel">
           <div className="questions-section">
-            <div className="questions-header">
-              <h3>문제 관리</h3>
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                <button 
-                  className="btn-primary add-question-btn"
-                  onClick={() => setShowQuestionModal(true)}
-                >
-                  + 문제 추가
-                </button>
-                <button 
-                  className="btn-primary add-question-btn ai-add-btn"
-                  onClick={() => setShowAiModal(true)}
-                >
-                  AI 문제 추가
-                </button>
-                <button 
-                  className="btn-primary"
-                  onClick={handleDownloadQuestions}
-                >
-                  문제 다운로드(CSV)
-                </button>
-                <button 
-                  className="btn-primary"
-                  onClick={handleUploadClick}
-                >
-                  문제 업로드(CSV)
-                </button>
-                <input ref={fileInputRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleFileChange} />
+              <div className="questions-header">
+                <h3>문제 관리</h3>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <button 
+                    className="btn btn--light"
+                    onClick={() => setShowQuestionModal(true)}
+                  >
+                    문제 추가
+                  </button>
+                  <button 
+                    className="btn btn--light"
+                    onClick={() => setShowAiModal(true)}
+                  >
+                    AI 문제 추가
+                  </button>
+                  <button 
+                    className="btn btn--light"
+                    onClick={handleDownloadQuestions}
+                  >
+                    문제 다운로드
+                  </button>
+                  <button 
+                    className="btn btn--light"
+                    onClick={handleUploadClick}
+                  >
+                    문제 업로드
+                  </button>
+                  <input ref={fileInputRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleFileChange} />
+                </div>
               </div>
-            </div>
-            
             <QuestionStack
               questions={questions}
               onDelete={handleDeleteQuestion}
+              onEdit={handleEditQuestion}
               onReorder={handleReorderQuestions}
-              currentIndex={currentQuestionIndex}
-              gameState={gameState}
-              hasStarted={hasStarted}
+              currentIndex={adminGameState === 'finished' ? -1 : currentQuestionIndex}
+              gameState={adminGameState}
+              hasStarted={adminGameState === 'finished' ? false : hasStarted}
             />
-          </div>
-
-          <div className="settings-section">
-            <h3>타이머 설정</h3>
-            <div className="setting-group">
-              <label>문제 시간(초)</label>
-              <input
-                type="number"
-                value={gameSettings.timeLimit}
-                min={1}
-                max={300}
-                onChange={(e) => handleGameSettingsChange({ timeLimit: parseInt(e.target.value) || 1 })}
-              />
-              <small>문제가 공개되는 시간입니다.</small>
-            </div>
-            <div className="setting-group">
-              <label>정답 공개 시간(초)</label>
-              <input
-                type="number"
-                value={gameSettings.answerRevealTime}
-                min={1}
-                max={120}
-                onChange={(e) => handleGameSettingsChange({ answerRevealTime: parseInt(e.target.value) || 1 })}
-              />
-              <small>정답을 공개하는 시간입니다.</small>
-            </div>
-            <div className="checkbox-group">
-              <label className="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={!gameSettings.autoMode}
-                  onChange={(e) => handleGameSettingsChange({ autoMode: !e.target.checked })}
-                />
-                수동 모드
-              </label>
-              <small>수동 모드는 다음 단계로 넘어갈 때 직접 ‘넘어가기’를 눌러야 합니다.</small>
-            </div>
           </div>
         </div>
       </div>
@@ -514,22 +809,58 @@ const NewAdminPanel: React.FC = () => {
           onClose={() => setShowQuestionModal(false)}
         />
       )}
+      {showEditModal && editingQuestion && (
+        <EditQuestionModal
+          question={editingQuestion}
+          onSubmit={handleEditSubmit}
+          onClose={() => {
+            setShowEditModal(false);
+            setEditingQuestion(null);
+          }}
+        />
+      )}
       {showAiModal && (
         <AiQuestionModal
           onClose={() => setShowAiModal(false)}
           onGenerate={(list: AiQuestion[]) => {
             console.info('[AI_GEN_WIRE] 수신 항목 수', list.length);
-            const mapped = list.map(q => ({
-              id: q.id || 'q_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
-              type: q.type as QuestionType,
-              question: q.question,
-              score: typeof q.score === 'number' ? q.score : 10,
-              timeLimit: gameSettings.timeLimit,
-              options: q.options,
-              correctAnswer: q.correctAnswer,
-            })) as any[];
+            
+            // 다음 문제 번호 계산 함수
+            const getNextQuestionNumber = (): number => {
+              if (questions.length === 0) return 1;
+              
+              const existingNumbers = questions
+                .map(q => {
+                  const match = q.id.match(/^q_(\d+)_/);
+                  return match ? parseInt(match[1], 10) : 0;
+                })
+                .filter(num => num > 0);
+              
+              return existingNumbers.length > 0 ? Math.max(...existingNumbers) + 1 : 1;
+            };
+
+            let nextNumber = getNextQuestionNumber();
+            const mapped = list.map(q => {
+              const base: any = {
+                id: `q_${nextNumber++}_${Date.now()}`,
+                type: q.type as QuestionType,
+                question: q.question,
+                score: typeof q.score === 'number' ? q.score : 10,
+                timeLimit: gameSettings.timeLimit,
+                correctAnswer: q.correctAnswer
+              };
+              
+              // options가 유효한 경우에만 포함 (undefined/빈 배열 방지)
+              if (Array.isArray(q.options) && q.options.length > 0) {
+                base.options = q.options;
+              }
+              
+              return base;
+            }) as any[];
             actions.addQuestionsBulk(mapped as any);
             setShowAiModal(false);
+            const msg = { message: `🤖 AI가 ${list.length}개의 문제를 생성했습니다!`, type: 'success' };
+            syncManagerFs.broadcast('SYSTEM_MESSAGE', msg);
           }}
         />
       )}

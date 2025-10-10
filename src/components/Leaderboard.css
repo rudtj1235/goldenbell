@@ -4,8 +4,8 @@
 .lb-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid #eee; }
 .lb-close { background: transparent; border: none; font-size: 20px; cursor: pointer; }
 .lb-tabs { display: flex; gap: 8px; padding: 10px 16px; border-bottom: 1px solid #eee; }
-.lb-tab { padding: 8px 12px; border-radius: 8px; border: none; background: #f1f3f5; cursor: pointer; font-weight: 600; }
-.lb-tab.active { background: #667eea; color: #fff; }
+.lb-tab { padding: 8px 12px; border-radius: 8px; border: none; background: #f1f3f5; cursor: pointer; font-weight: 600; transition: all 0.3s; }
+.lb-tab.active { background: #ffc107; color: #111; }
 .lb-content { padding: 16px; max-height: 60vh; overflow: auto; }
 .lb-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .lb-list li { display: grid; grid-template-columns: 40px 1fr 80px; align-items: center; padding: 8px 12px; border: 1px solid #eee; border-radius: 8px; background: #fafbfc; }
@@ -14,7 +14,7 @@
 .lb-list .score { text-align: right; font-weight: 700; color: #1c7ed6; }
 .leaderboard {
   min-height: 100vh;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #f9d423 0%, #ffb000 100%);
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   padding: 20px;
 }

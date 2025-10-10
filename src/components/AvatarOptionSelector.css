@@ -65,17 +65,9 @@
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
-.option-button.selected {
-  border-color: #667eea;
-  background: linear-gradient(135deg, #667eea, #764ba2);
-  color: white;
-}
+.option-button.selected { border-color: rgba(255,193,7,0.95); background: linear-gradient(135deg, #f9d423, #ffb000); color: #111; }
 
-.option-button.selected.color-option {
-  border-color: #667eea;
-  border-width: 4px;
-  transform: scale(1.1);
-}
+.option-button.selected.color-option { border-color: rgba(255,193,7,0.95); border-width: 4px; transform: scale(1.1); }
 
 .option-button.selected:not(.color-option) {
   font-weight: bold;

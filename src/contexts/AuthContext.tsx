@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { auth, googleProvider } from '../config/firebase';
-import { onAuthStateChanged, signInWithPopup, signOut, User } from 'firebase/auth';
+import { onAuthStateChanged, signInWithPopup, signOut, signInAnonymously, User } from 'firebase/auth';
 
 type AuthContextValue = {
   user: User | null;
@@ -19,9 +19,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u);
       setLoading(false);
+      try { (window as any).firebaseAuthUid = u?.uid || null; } catch {}
     });
     return () => unsub();
   }, []);
+
+  useEffect(() => {
+    // 로그인하지 않은 경우 자동으로 익명 로그인하여 세션 지속성 보장
+    if (!loading && !user) {
+      signInAnonymously(auth).catch(() => {});
+    }
+  }, [loading, user]);
 
   const signInWithGoogle = async () => {
     await signInWithPopup(auth, googleProvider);

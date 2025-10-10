@@ -80,7 +80,7 @@ const PlayerSetup: React.FC = () => {
     const newPlayer: Player = {
       id: 'player_' + Date.now(),
       nickname: playerData.nickname,
-      team: selectedTeam || undefined,
+      ...(selectedTeam && { team: selectedTeam }), // team이 있을 때만 포함
       score: 0,
       isEliminated: false,
       hasSubmitted: false,

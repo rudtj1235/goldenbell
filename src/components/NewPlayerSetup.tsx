@@ -7,10 +7,12 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Player } from '../types/game';
 import { useNewGameContext } from '../contexts/NewGameContext';
-import Avatar from 'avataaars2';
+import { useAuth } from '../contexts/AuthContext';
+import AvatarDisplay from './AvatarDisplay';
 import AvatarOptionSelector from './AvatarOptionSelector';
 import ColorPicker from './ColorPicker';
-import roomManager from '../services/RoomManager';
+import { db } from '../config/firebase';
+import { doc, getDoc } from 'firebase/firestore';
 import './PlayerSetup.css';
 
 interface PlayerData {
@@ -36,8 +38,10 @@ const NewPlayerSetup: React.FC = () => {
   });
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showCustomize, setShowCustomize] = useState(false);
 
   const { actions } = useNewGameContext();
+  const { user, loading } = useAuth();
   const navigate = useNavigate();
 
   const teams = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
@@ -46,21 +50,23 @@ const NewPlayerSetup: React.FC = () => {
     // localStorage에서 플레이어 데이터 로드
     const saved = localStorage.getItem('playerData');
     if (saved) {
-      try {
-        const data = JSON.parse(saved);
-        // 방 코드 즉시 재검증: 유효하지 않으면 메인으로 되돌림
-        const code = String(data.roomCode || '').toUpperCase();
-        const rooms = roomManager.getPublicRooms();
-        const exists = rooms.some(r => r.code === code);
-        if (!exists) {
+      (async () => {
+        try {
+          const data = JSON.parse(saved);
+          // 방 코드 즉시 재검증: Firestore에서 확인
+          const code = String(data.roomCode || '').toUpperCase();
+          const ref = doc(db, 'game_rooms', code);
+          const snap = await getDoc(ref);
+          if (!snap.exists()) {
+            navigate('/');
+            return;
+          }
+          setPlayerData({ nickname: String(data.nickname || ''), roomCode: code });
+        } catch (e) {
+          console.error('플레이어 데이터 파싱/검증 실패:', e);
           navigate('/');
-          return;
         }
-        setPlayerData({ nickname: String(data.nickname || ''), roomCode: code });
-      } catch (e) {
-        console.error('플레이어 데이터 파싱 실패:', e);
-        navigate('/');
-      }
+      })();
     } else {
       console.error('플레이어 데이터 없음');
       navigate('/');
@@ -74,20 +80,16 @@ const NewPlayerSetup: React.FC = () => {
     }));
   };
 
-  const getBackgroundColor = (colorName: string): string => {
-    const colorMap: { [key: string]: string } = {
-      Black: '#262e33', Brown: '#8B4513', Red: '#C93305',
-      Blue01: '#65C9FF', Blue02: '#5199E4', Blue03: '#25557C',
-      Gray01: '#E6E6E6', Gray02: '#929598', Heather: '#3C4F5C',
-      PastelBlue: '#B1E2FF', PastelGreen: '#A7FFC4', PastelOrange: '#FFDEB5',
-      PastelRed: '#FFAFB9', PastelYellow: '#FFFFB1', Pink: '#FF488E', White: '#FFFFFF'
-    };
-    return colorMap[colorName] || '#B1E2FF';
-  };
 
   const handleJoinGame = async () => {
     if (!playerData) {
       setError('플레이어 데이터가 없습니다.');
+      return;
+    }
+
+    // 익명 로그인이 아직 준비되지 않은 경우 대기
+    if (loading || !user) {
+      setError('연결을 준비하고 있습니다. 잠시 후 다시 시도해주세요.');
       return;
     }
 
@@ -98,32 +100,33 @@ const NewPlayerSetup: React.FC = () => {
       // 방 존재 여부 확인
       // 최초 코드 입력단에서 검증을 통과했으므로 여기서는 재검증으로 막지 않음.
 
-      const newPlayer: Player = {
+      const basePlayer: Player = {
         id: 'player_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
         nickname: playerData.nickname,
-        team: selectedTeam || undefined,
         score: 0,
         isEliminated: false,
         hasSubmitted: false,
         avatar: avatarConfig
-      };
+      } as any;
+      if (selectedTeam) (basePlayer as any).team = selectedTeam;
+      const newPlayer = basePlayer;
 
       console.log('🎮 방 참여 시작:', {
         roomCode: playerData.roomCode,
         player: newPlayer
       });
 
-      // 방에 참여
-      // 단순: 1회 시도 (로직 단순화). 실패 시 에러 노출 후 메인으로 유도
-      const ok = actions.joinRoom(playerData.roomCode, newPlayer);
+      // 방에 참여 (Firestore 동기화)
+      const ok = await actions.joinRoom(playerData.roomCode, newPlayer);
       if (!ok) {
         setError('존재하지 않거나 종료된 방입니다. 방 코드를 확인하세요.');
         setIsLoading(false);
         return;
       }
 
-      // 현재 플레이어 정보 저장
+      // 현재 플레이어 정보 저장 + roomCode 바인딩
       localStorage.setItem('currentPlayer', JSON.stringify(newPlayer));
+      try { localStorage.setItem('currentRoomCode', playerData.roomCode); } catch {}
 
       console.log('✅ 방 참여 완료');
 
@@ -156,8 +159,8 @@ const NewPlayerSetup: React.FC = () => {
   return (
     <div className="player-setup">
       <header className="setup-header">
-        <button className="back-btn" onClick={handleBack}>
-          ← 뒤로가기
+        <button className="exit-button" onClick={handleBack}>
+          나가기
         </button>
         <h1>아바타 & 팀 설정</h1>
         <div className="room-info">
@@ -167,21 +170,15 @@ const NewPlayerSetup: React.FC = () => {
       </header>
 
       <div className="setup-content">
-        <div className="avatar-section">
-          <h2>아바타 커스터마이징</h2>
-          
+        <div className="content-card">
+          <h2 className="card-title">아바타 커스터마이징</h2>
           <div className="avatar-preview">
-            <div
-              className="custom-avatar-background"
-              style={{ backgroundColor: getBackgroundColor(avatarConfig.backgroundColor) }}
-            >
-              <Avatar {...avatarConfig} />
-            </div>
+            <AvatarDisplay avatar={avatarConfig} size={200} />
           </div>
 
           <div className="avatar-controls">
-            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 12 }}>
-              <button className="randomize-btn" onClick={() => {
+            <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginBottom: 12 }}>
+              <button className={showCustomize ? 'btn btn--light' : 'btn btn--y-sunset'} onClick={() => {
                 const hairOptions = [
                   'LongHairBigHair','LongHairBob','LongHairBun','LongHairCurly','LongHairCurvy','LongHairDreads','LongHairFrida',
                   'LongHairFro','LongHairFroBand','LongHairNotTooLong','LongHairShavedSides','LongHairMiaWallace','LongHairStraight',
@@ -200,86 +197,138 @@ const NewPlayerSetup: React.FC = () => {
                   skinColor: pick(['Tanned','Yellow','Pale','Light','Brown','DarkBrown','Black']),
                   backgroundColor: pick(['Black','Blue01','Blue02','Blue03','Gray01','Gray02','Heather','PastelBlue','PastelGreen','PastelOrange','PastelRed','PastelYellow','Pink','White'])
                 }));
-              }}>🎲 랜덤 생성</button>
+                // 활성 상태 전환: 랜덤 생성 활성, 직접 설정 비활성
+                setShowCustomize(false);
+              }}>랜덤 생성</button>
+              <button className={showCustomize ? 'btn btn--y-sunset' : 'btn btn--light'} onClick={() => setShowCustomize(true)}>
+                직접 설정
+              </button>
             </div>
-            <ColorPicker
-              skinColor={avatarConfig.skinColor}
-              hairColor={avatarConfig.hairColor}
-              clotheColor={avatarConfig.clotheColor}
-              backgroundColor={avatarConfig.backgroundColor}
-              onSkinColorChange={(value) => handleAvatarChange('skinColor', value)}
-              onHairColorChange={(value) => handleAvatarChange('hairColor', value)}
-              onClotheColorChange={(value) => handleAvatarChange('clotheColor', value)}
-              onBackgroundColorChange={(value) => handleAvatarChange('backgroundColor', value)}
-            />
+            {showCustomize && (
+              <>
+                <ColorPicker
+                  skinColor={avatarConfig.skinColor}
+                  hairColor={avatarConfig.hairColor}
+                  clotheColor={avatarConfig.clotheColor}
+                  backgroundColor={avatarConfig.backgroundColor}
+                  onSkinColorChange={(value) => handleAvatarChange('skinColor', value)}
+                  onHairColorChange={(value) => handleAvatarChange('hairColor', value)}
+                  onClotheColorChange={(value) => handleAvatarChange('clotheColor', value)}
+                  onBackgroundColorChange={(value) => handleAvatarChange('backgroundColor', value)}
+                />
 
-            <AvatarOptionSelector
-              label="헤어스타일"
-              options={[
-                'LongHairBigHair','LongHairBob','LongHairBun','LongHairCurly','LongHairCurvy','LongHairDreads','LongHairFrida',
-                'LongHairFro','LongHairFroBand','LongHairNotTooLong','LongHairShavedSides','LongHairMiaWallace','LongHairStraight',
-                'LongHairStraight2','LongHairStraightStrand','ShortHairDreads01','ShortHairDreads02','ShortHairFrizzle','ShortHairShaggyMullet',
-                'ShortHairShortCurly','ShortHairShortFlat','ShortHairShortRound','ShortHairShortWaved','ShortHairSides','ShortHairTheCaesar'
-              ]}
-              value={avatarConfig.topType}
-              onChange={(value) => handleAvatarChange('topType', value)}
-            />
+                <AvatarOptionSelector
+                  label="헤어스타일"
+                  options={[
+                    'LongHairBigHair','LongHairBob','LongHairBun','LongHairCurly','LongHairCurvy','LongHairDreads','LongHairFrida',
+                    'LongHairFro','LongHairFroBand','LongHairNotTooLong','LongHairShavedSides','LongHairMiaWallace','LongHairStraight',
+                    'LongHairStraight2','LongHairStraightStrand','ShortHairDreads01','ShortHairDreads02','ShortHairFrizzle','ShortHairShaggyMullet',
+                    'ShortHairShortCurly','ShortHairShortFlat','ShortHairShortRound','ShortHairShortWaved','ShortHairSides','ShortHairTheCaesar'
+                  ]}
+                  value={avatarConfig.topType}
+                  onChange={(value) => handleAvatarChange('topType', value)}
+                />
 
-            
+                <AvatarOptionSelector
+                  label="눈"
+                  options={[
+                    'Close','Cry','Default','Dizzy','EyeRoll','Happy','Hearts','Side','Squint','Surprised','Wink','WinkWacky'
+                  ]}
+                  value={avatarConfig.eyeType}
+                  onChange={(value) => handleAvatarChange('eyeType', value)}
+                />
 
-            <AvatarOptionSelector
-              label="눈"
-              options={[
-                'Close','Cry','Default','Dizzy','EyeRoll','Happy','Hearts','Side','Squint','Surprised','Wink','WinkWacky'
-              ]}
-              value={avatarConfig.eyeType}
-              onChange={(value) => handleAvatarChange('eyeType', value)}
-            />
+                <AvatarOptionSelector
+                  label="입"
+                  options={[
+                    'Concerned','Default','Disbelief','Eating','Grimace','Sad','ScreamOpen','Serious','Smile','Tongue','Twinkle','Vomit'
+                  ]}
+                  value={avatarConfig.mouthType}
+                  onChange={(value) => handleAvatarChange('mouthType', value)}
+                />
 
-            <AvatarOptionSelector
-              label="입"
-              options={[
-                'Concerned','Default','Disbelief','Eating','Grimace','Sad','ScreamOpen','Serious','Smile','Tongue','Twinkle','Vomit'
-              ]}
-              value={avatarConfig.mouthType}
-              onChange={(value) => handleAvatarChange('mouthType', value)}
-            />
-
-            <AvatarOptionSelector
-              label="옷"
-              options={[
-                'BlazerShirt','BlazerSweater','CollarSweater','GraphicShirt','Hoodie','Overall','ShirtCrewNeck','ShirtScoopNeck','ShirtVNeck'
-              ]}
-              value={avatarConfig.clotheType}
-              onChange={(value) => handleAvatarChange('clotheType', value)}
-            />
-
-            
+                <AvatarOptionSelector
+                  label="옷"
+                  options={[
+                    'BlazerShirt','BlazerSweater','CollarSweater','GraphicShirt','Hoodie','Overall','ShirtCrewNeck','ShirtScoopNeck','ShirtVNeck'
+                  ]}
+                  value={avatarConfig.clotheType}
+                  onChange={(value) => handleAvatarChange('clotheType', value)}
+                />
+              </>
+            )}
           </div>
         </div>
 
-        <div className="team-section">
-          <h2>팀 선택 (선택사항)</h2>
-          <p className="team-description">
+        <div className="content-card">
+          <h2 className="card-title">팀 선택 (선택사항)</h2>
+          <p style={{ textAlign: 'center', color: '#666', marginBottom: '20px' }}>
             팀을 선택하지 않으면 개인전으로 참여합니다.
           </p>
           
-          <div className="team-grid">
-            <button
-              className={`team-option ${selectedTeam === '' ? 'selected' : ''}`}
-              onClick={() => setSelectedTeam('')}
-            >
-              개인전
-            </button>
-            {teams.map(team => (
+          <div className="team-card-group">
+            <div className="team-card single">
               <button
-                key={team}
-                className={`team-option ${selectedTeam === team ? 'selected' : ''}`}
-                onClick={() => setSelectedTeam(team)}
+                className={`team-select-button individual ${selectedTeam === '' ? 'selected' : ''}`}
+                onClick={() => setSelectedTeam('')}
               >
-                {team}팀
+                개인전
               </button>
-            ))}
+            </div>
+            
+            <div className="team-card grid">
+              <button
+                className={`team-select-button team red ${selectedTeam === 'A' ? 'selected' : ''}`}
+                onClick={() => setSelectedTeam('A')}
+              >
+                A팀
+              </button>
+              <button
+                className={`team-select-button team orange ${selectedTeam === 'B' ? 'selected' : ''}`}
+                onClick={() => setSelectedTeam('B')}
+              >
+                B팀
+              </button>
+              <button
+                className={`team-select-button team yellow ${selectedTeam === 'C' ? 'selected' : ''}`}
+                onClick={() => setSelectedTeam('C')}
+              >
+                C팀
+              </button>
+              <button
+                className={`team-select-button team green ${selectedTeam === 'D' ? 'selected' : ''}`}
+                onClick={() => setSelectedTeam('D')}
+              >
+                D팀
+              </button>
+            </div>
+            
+            <div className="team-card grid">
+              <button
+                className={`team-select-button team blue ${selectedTeam === 'E' ? 'selected' : ''}`}
+                onClick={() => setSelectedTeam('E')}
+              >
+                E팀
+              </button>
+              <button
+                className={`team-select-button team indigo ${selectedTeam === 'F' ? 'selected' : ''}`}
+                onClick={() => setSelectedTeam('F')}
+              >
+                F팀
+              </button>
+              <button
+                className={`team-select-button team purple ${selectedTeam === 'G' ? 'selected' : ''}`}
+                onClick={() => setSelectedTeam('G')}
+              >
+                G팀
+              </button>
+              <button
+                className={`team-select-button team gray ${selectedTeam === 'H' ? 'selected' : ''}`}
+                onClick={() => setSelectedTeam('H')}
+              >
+                H팀
+              </button>
+            </div>
           </div>
         </div>
 
@@ -289,9 +338,9 @@ const NewPlayerSetup: React.FC = () => {
           </div>
         )}
 
-        <div className="setup-actions">
+        <div className="bottom-actions">
           <button 
-            className="btn-primary"
+            className="join-button"
             onClick={handleJoinGame}
             disabled={isLoading}
           >

@@ -16,6 +16,7 @@ export interface PublicRoom {
   hostActive: boolean;
   lastHostActivity: number;
   createdAt: number;
+  hostId?: string; // Optional: Firestore에서 가져올 때 포함될 수 있음
 }
 
 class RoomManager {
@@ -104,7 +105,7 @@ class RoomManager {
       eliminationMode: false,
       eliminationThreshold: 3,
       autoMode: true,
-      answerRevealTime: 5
+      answerRevealTime: 10
     };
 
     this.rooms.set(roomCode, room);
@@ -218,7 +219,7 @@ class RoomManager {
           code: roomCode,
           subject: publicRoom.subject,
           isPublic: publicRoom.isPublic,
-          hostId: 'temp_host',
+          hostId: publicRoom.hostId || '',
           players: [],
           questions: [],
           currentQuestionIndex: 0,
@@ -226,7 +227,7 @@ class RoomManager {
           eliminationMode: false,
           eliminationThreshold: 3,
           autoMode: true,
-          answerRevealTime: 5
+          answerRevealTime: 10
         };
         this.rooms.set(roomCode, room);
         try { console.info('[JOIN_TRACE] RM.stubCreated', { roomCode }); } catch {}
