@@ -64,17 +64,20 @@ exports.aiProxy = onRequest({ region: 'us-central1', cors: true, invoker: 'publi
     let pick = prefer.find(m => available.includes(m)) || prefer.find(m => m) || 'gemini-1.5-flash';
     if (forceModel && available.includes(forceModel)) pick = forceModel;
 
-    const instruction = `다음 주제로 고품질 퀴즈 문제 ${safeCount}개를 생성하세요.
+    const instruction = `다음 주제로 **고급 수준**의 퀴즈 문제 ${safeCount}개를 생성하세요.
 
 **문제 제작 방법**:
-1. 웹에서 해당 주제의 기존 문제, 교육 자료, 기출문제를 검색하여 참고하세요
-2. 검증된 문제 스타일을 바탕으로 고품질 문제를 만드세요
-3. JSON 배열로 정확히 ${safeCount}개를 출력하세요
+1. 웹에서 해당 주제의 전문 자료, 학술 논문, 고급 교육 콘텐츠를 검색하여 참고하세요
+2. 대학 수준 이상의 지식을 요구하는 문제를 만드세요
+3. 단순 암기가 아닌 **사고력과 이해력**을 평가하는 문제로 구성하세요
+4. JSON 배열로 정확히 ${safeCount}개를 출력하세요
 
 **핵심 원칙**:
-- 정답이 유일하고 명확한 문제만
-- 교육적 가치가 있는 문제
-- 주제에 직접 관련된 내용만
+- **고급 수준**: 중등교육 이상의 지식과 사고력 요구
+- **정답이 유일하고 명확한** 문제만
+- **교육적 가치가 높은** 전문적 내용
+- **주제에 직접 관련된** 깊이 있는 내용
+- **단순 암기 금지**: 이해와 응용을 요구하는 문제
 
 **문제 유형 분배 가이드:**
 - OX 문제: 전체의 30-40% (사실 확인, 개념 이해)
@@ -245,23 +248,30 @@ exports.aiProxy = onRequest({ region: 'us-central1', cors: true, invoker: 'publi
       contents: [
         { role: 'user', parts: [{ text: instruction }] },
         { role: 'user', parts: [{ text: String(prompt) }] }
-      ],
-      tools: [{ googleSearch: {} }], // 웹 검색 활성화
-      generationConfig: { responseMimeType: 'application/json' }
+      ]
     };
 
     let last = null;
-    // 2) v1 우선, 실패 시 v1beta로 폴백
-    const bases = ['https://generativelanguage.googleapis.com/v1/models','https://generativelanguage.googleapis.com/v1beta/models'];
+    // 2) v1beta 우선 (Google Search, JSON 응답 지원), 실패 시 v1로 폴백
+    const bases = ['https://generativelanguage.googleapis.com/v1beta/models','https://generativelanguage.googleapis.com/v1/models'];
     for (const base of bases) {
       for (const model of [pick, ...prefer.filter(m => m !== pick)]) {
         const url = `${base}/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+        
+        // v1beta에서만 고급 기능 사용
+        const requestBody = base.includes('v1beta') ? {
+          ...body,
+          tools: [{ googleSearch: {} }],
+          generationConfig: { responseMimeType: 'application/json' }
+        } : body;
+        
         const r = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
+          body: JSON.stringify(requestBody)
         });
         const txt = await r.text();
+        console.log(`[AI_PROXY] ${model} (${base}): ${r.status} - ${txt.slice(0, 500)}`);
         if (r.ok) return res.status(200).send(txt);
         last = { status: r.status, model, base, body: txt.slice(0, 2000) };
         // 404/400은 다음 모델/엔드포인트로 곧바로 폴백
@@ -271,6 +281,7 @@ exports.aiProxy = onRequest({ region: 'us-central1', cors: true, invoker: 'publi
     }
     return res.status(502).json({ error: 'upstream', detail: last });
   } catch (e) {
+    console.error('[AI_PROXY] Error:', e);
     return res.status(500).json({ error: 'proxy', message: String(e && e.message || e) });
   }
 });
