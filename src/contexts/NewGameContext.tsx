@@ -355,15 +355,21 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
         const normalizedGameState = prev.gameState === 'finished' ? 'waiting' : prev.gameState;
         const normalizedIndex = prev.gameState === 'finished' ? 0 : prev.currentQuestionIndex;
         const newQuestions = [...prev.questions, question];
-        // 동기화는 prev 기준으로 정확히 반영
-        syncManager.updateGameData({
-          questions: newQuestions,
-          gameState: normalizedGameState,
-          currentQuestionIndex: normalizedIndex,
-          players: prev.players,
-          room: prev.room
-        } as any);
+        
+        // 낙관적 UI 업데이트: 즉시 로컬 상태 반영
         eventBus.emit('QUESTION_ADDED', question);
+        
+        // Firestore는 백그라운드에서 (깜빡임 방지)
+        setTimeout(() => {
+          syncManager.updateGameData({
+            questions: newQuestions,
+            gameState: normalizedGameState,
+            currentQuestionIndex: normalizedIndex,
+            players: prev.players,
+            room: prev.room
+          } as any);
+        }, 0);
+        
         return { ...prev, questions: newQuestions, gameState: normalizedGameState, currentQuestionIndex: normalizedIndex };
       });
     },
@@ -374,14 +380,21 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
         const normalizedGameState = prev.gameState === 'finished' ? 'waiting' : prev.gameState;
         const normalizedIndex = prev.gameState === 'finished' ? 0 : prev.currentQuestionIndex;
         const newQuestions = [...prev.questions, ...questionsToAdd];
-        syncManager.updateGameData({
-          questions: newQuestions,
-          gameState: normalizedGameState,
-          currentQuestionIndex: normalizedIndex,
-          players: prev.players,
-          room: prev.room
-        } as any);
+        
+        // 낙관적 UI 업데이트: 즉시 로컬 상태 반영
         eventBus.emit('QUESTIONS_ADDED', { count: questionsToAdd.length });
+        
+        // Firestore는 백그라운드에서 (깜빡임 방지)
+        setTimeout(() => {
+          syncManager.updateGameData({
+            questions: newQuestions,
+            gameState: normalizedGameState,
+            currentQuestionIndex: normalizedIndex,
+            players: prev.players,
+            room: prev.room
+          } as any);
+        }, 0);
+        
         return { ...prev, questions: newQuestions, gameState: normalizedGameState, currentQuestionIndex: normalizedIndex };
       });
     },
@@ -391,29 +404,47 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
         const newQuestions = prev.questions.map(q => 
           q.id === updatedQuestion.id ? updatedQuestion : q
         );
-        syncManager.updateGameData({
-          questions: newQuestions,
-          gameState: prev.gameState,
-          currentQuestionIndex: prev.currentQuestionIndex,
-          players: prev.players,
-          room: prev.room
-        } as any);
+        
+        // 낙관적 UI 업데이트: 즉시 로컬 상태 반영
         eventBus.emit('QUESTION_UPDATED', updatedQuestion);
+        
+        // Firestore는 백그라운드에서 (깜빡임 방지)
+        setTimeout(() => {
+          syncManager.updateGameData({
+            questions: newQuestions,
+            gameState: prev.gameState,
+            currentQuestionIndex: prev.currentQuestionIndex,
+            players: prev.players,
+            room: prev.room
+          } as any);
+        }, 0);
+        
         return { ...prev, questions: newQuestions };
       });
     },
 
     deleteQuestion: (questionId: string) => {
       const newQuestions = state.questions.filter(q => q.id !== questionId);
+      
+      // 낙관적 UI 업데이트: 즉시 로컬 상태 반영
       setState(prev => ({ ...prev, questions: newQuestions }));
-      syncManager.updateGameData({ questions: newQuestions });
       eventBus.emit('QUESTION_DELETED', questionId);
+      
+      // Firestore 업데이트는 백그라운드에서 (깜빡임 방지)
+      setTimeout(() => {
+        syncManager.updateGameData({ questions: newQuestions });
+      }, 0);
     },
 
     reorderQuestions: (questions: Question[]) => {
+      // 낙관적 UI 업데이트: 즉시 로컬 상태 반영
       setState(prev => ({ ...prev, questions }));
-      syncManager.updateGameData({ questions });
       eventBus.emit('QUESTIONS_REORDERED', questions);
+      
+      // Firestore는 백그라운드에서 (깜빡임 방지)
+      setTimeout(() => {
+        syncManager.updateGameData({ questions });
+      }, 0);
     },
 
     startGame: () => {

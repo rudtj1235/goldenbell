@@ -102,11 +102,28 @@ ${JSON.stringify(questions, null, 2)}
    - correctAnswer는 **문자열**
    - "~중 하나", "~보다 큰" 같은 애매한 표현 금지
 
-**수정 지침**:
-- 부적절한 문제 → 주제에 맞는 새 문제로 **교체**
-- 단답형이 애매하면 → 객관식으로 **변환**
-- 정답이 여러 개 가능하면 → 정답 1개로 **수정**
-- 너무 쉬운/어려운 문제 → 난이도 **조정**
+**필수 수정 지침** (각 문제마다 모든 항목 검토):
+1. **주제 적합성 검증**
+   - 주제("${originalPrompt}")에 직접 관련된 문제인가?
+   - 아니라면 → 주제에 맞는 문제로 수정
+   
+2. **난이도 검증**
+   - 너무 쉽거나 어려운가?
+   - 그렇다면 → 적절한 난이도로 조정
+   
+3. **정답 명확성 검증**
+   - 정답이 정확히 1개만 존재하는가?
+   - 여러 답이 가능하다면 → 답이 1개로 명확한 문제로 교체
+   
+4. **답안 뻔함 방지**
+   - OX/객관식에서 답이 너무 뻔한가?
+   - 그렇다면 → 문장이나 선택지를 조정하여 고민하게 만들기
+   
+5. **상식 검증** (최종 단계)
+   - 사람의 관점에서 상식적이고 납득 가능한 문제와 답안인가?
+   - 아니라면 → 완전히 새로운 문제로 교체
+
+**중요**: 형식만 맞추지 말고, 위 5가지 기준을 모두 통과한 고품질 문제만 출력하세요.
 
 **출력 형식**: JSON 배열만. 각 항목:
 - OX: { "type":"ox", "question":"...", "correctAnswer":"O 또는 X", "score":10 }
@@ -136,29 +153,34 @@ ${JSON.stringify(questions, null, 2)}
 export async function generateQuestionsWithGemini(prompt: string, count = 10, opts?: { forceModel?: string; idToken?: string }): Promise<AiQuestion[]> {
   console.info('[AI_GEN] 🎯 1단계: 문제 생성', { count, prompt: prompt.slice(0, 50) + '...' });
   
-  // 1단계: 문제 생성 (명확한 프롬프트)
+  // 1단계: 문제 생성 (주제 중심, 자연스러운 유형 선택)
   const generationPrompt = `주제: ${prompt}
 
-위 주제에 맞는 퀴즈 문제 ${count}개를 생성하세요. 주제의 특성과 난이도를 고려하여 다양한 유형으로 만드세요.
+위 주제로 퀴즈 문제 ${count}개를 생성하세요.
 
-**문제 유형**:
-1. **OX 문제** (type: "ox"): 참/거짓 판단
-   - 예: { "type":"ox", "question":"태양은 서쪽에서 뜬다.", "correctAnswer":"X", "score":10 }
-   
-2. **객관식** (type: "multiple"): 4개 선택지 중 1개 정답
-   - 예: { "type":"multiple", "question":"대한민국의 수도는?", "options":["서울","부산","대구","인천"], "correctAnswer":0, "score":10 }
-   
-3. **단답형** (type: "short"): 짧은 답 (숫자, 단어, 고유명사만)
-   - 예: { "type":"short", "question":"3 × 7 = ?", "correctAnswer":"21", "score":10 }
+**핵심 원칙**:
+1. 주제에 **직접 관련된** 내용만 다룰 것
+2. 주제 특성에 **자연스러운 유형**만 선택 (억지로 모든 유형을 섞지 말 것)
+3. 정답은 반드시 **1개만** 명확하게 존재할 것
+4. 답이 너무 뻔하지 않을 것 (고민하게 만들 것)
 
-**중요 규칙**:
-- OX/단답형은 options 필드 **절대 금지**
-- 객관식 correctAnswer는 반드시 **숫자** (0~3)
-- 단답형은 정답이 **명확히 1개**만 존재하는 문제 (애매한 표현 금지)
-- 주제에 벗어나지 말 것
+**유형 선택 가이드**:
+- OX (type:"ox"): 주제 관련 사실/개념의 참/거짓 판단 문제
+- 객관식 (type:"multiple"): 선택지 4개가 자연스러운 경우
+- 단답형 (type:"short"): 답이 숫자/한 단어로 명확한 경우
 
-JSON 배열만 출력: [{ "type":"...", "question":"...", "correctAnswer":"...", "score":10 }, ...]
-정확히 ${count}개 생성하세요.`;
+**JSON 형식** (반드시 준수):
+- OX: { "type":"ox", "question":"...", "correctAnswer":"O 또는 X", "score":10 }
+- 객관식: { "type":"multiple", "question":"...", "options":["1","2","3","4"], "correctAnswer":0~3 숫자, "score":10 }
+- 단답형: { "type":"short", "question":"...", "correctAnswer":"답 문자열", "score":10 }
+
+**절대 금지**:
+- OX/단답형에 options 필드 포함
+- 주제와 무관한 문제
+- 답이 여러 개 가능한 문제
+
+JSON 배열만 출력: [{ ... }, { ... }, ...]
+정확히 ${count}개 생성.`;
 
   let generated: AiQuestion[] = [];
   

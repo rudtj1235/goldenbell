@@ -164,14 +164,8 @@ const NewAdminPanel: React.FC = () => {
   };
 
   const handleDeleteQuestion = (questionId: string) => {
-    // 낙관적 업데이트: UI에서 즉시 삭제
+    // 낙관적 업데이트: UI에서 즉시 삭제 (백그라운드 처리)
     actions.deleteQuestion(questionId);
-    
-    // Toast는 별도 처리 (Firestore 충돌 방지)
-    setTimeout(() => {
-      const msg = { message: '🗑️ 문제가 삭제되었습니다.', type: 'info' };
-      syncManagerFs.broadcast('SYSTEM_MESSAGE', msg);
-    }, 100);
   };
 
   const handleReorderQuestions = (reorderedQuestions: Question[]) => {
