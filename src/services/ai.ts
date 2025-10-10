@@ -153,34 +153,40 @@ ${JSON.stringify(questions, null, 2)}
 export async function generateQuestionsWithGemini(prompt: string, count = 10, opts?: { forceModel?: string; idToken?: string }): Promise<AiQuestion[]> {
   console.info('[AI_GEN] 🎯 1단계: 문제 생성', { count, prompt: prompt.slice(0, 50) + '...' });
   
-  // 1단계: 문제 생성 (주제 중심, 자연스러운 유형 선택)
+  // 1단계: 문제 생성 (교육 현장 스타일 + 주제 중심)
   const generationPrompt = `주제: ${prompt}
 
-위 주제로 퀴즈 문제 ${count}개를 생성하세요.
+위 주제로 **교육 현장에서 실제 사용될 법한** 고품질 퀴즈 문제 ${count}개를 생성하세요.
+
+**문제 제작 프로세스**:
+1. 해당 주제의 **대표적인 교육 자료나 교과서**를 떠올리세요
+2. 그곳에 나올 법한 **검증된 스타일의 문제**를 참고하세요
+3. 주제 특성에 **자연스러운 유형**만 선택하세요 (억지로 섞지 말 것)
 
 **핵심 원칙**:
-1. 주제에 **직접 관련된** 내용만 다룰 것
-2. 주제 특성에 **자연스러운 유형**만 선택 (억지로 모든 유형을 섞지 말 것)
-3. 정답은 반드시 **1개만** 명확하게 존재할 것
-4. 답이 너무 뻔하지 않을 것 (고민하게 만들 것)
+- 주제에 **직접 관련된** 내용만
+- 정답은 **명확히 1개**만 존재
+- 답이 **너무 뻔하지 않게** (적절한 난이도)
+- **교육적 가치**가 있는 문제
 
-**유형 선택 가이드**:
-- OX (type:"ox"): 주제 관련 사실/개념의 참/거짓 판단 문제
-- 객관식 (type:"multiple"): 선택지 4개가 자연스러운 경우
-- 단답형 (type:"short"): 답이 숫자/한 단어로 명확한 경우
+**유형별 가이드**:
+- OX: 주제 핵심 개념의 참/거짓 (교과서 O/X 문제 스타일)
+- 객관식: 선택지가 자연스러운 경우 (기출문제 스타일)
+- 단답형: 답이 숫자/단어 1개로 명확한 경우 (단답형 시험 스타일)
 
-**JSON 형식** (반드시 준수):
+**JSON 형식** (엄격히 준수):
 - OX: { "type":"ox", "question":"...", "correctAnswer":"O 또는 X", "score":10 }
 - 객관식: { "type":"multiple", "question":"...", "options":["1","2","3","4"], "correctAnswer":0~3 숫자, "score":10 }
 - 단답형: { "type":"short", "question":"...", "correctAnswer":"답 문자열", "score":10 }
 
 **절대 금지**:
-- OX/단답형에 options 필드 포함
-- 주제와 무관한 문제
-- 답이 여러 개 가능한 문제
+- OX/단답형에 options 포함
+- 주제 무관 문제
+- 답 여러 개 가능한 문제
+- 넌센스/말장난 (교육 목적이 아닌 경우)
 
-JSON 배열만 출력: [{ ... }, { ... }, ...]
-정확히 ${count}개 생성.`;
+JSON 배열만: [{ ... }, ...]
+정확히 ${count}개.`;
 
   let generated: AiQuestion[] = [];
   

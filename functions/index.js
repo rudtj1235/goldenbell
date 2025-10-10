@@ -64,11 +64,17 @@ exports.aiProxy = onRequest({ region: 'us-central1', cors: true, invoker: 'publi
     let pick = prefer.find(m => available.includes(m)) || prefer.find(m => m) || 'gemini-1.5-flash';
     if (forceModel && available.includes(forceModel)) pick = forceModel;
 
-    const instruction = `JSON 배열만 출력하세요. 각 항목은 { "type":"ox|multiple|short", "question":"...", "options":[...], "correctAnswer":"...|index", "score":10 } 형식이며, 길이는 정확히 ${safeCount}개입니다.
+    const instruction = `다음 주제로 고품질 퀴즈 문제 ${safeCount}개를 생성하세요.
 
-**중요: 반드시 정확히 ${safeCount}개의 문제를 생성해야 합니다. 부족하면 안됩니다!**
+**문제 제작 방법**:
+1. 웹에서 해당 주제의 기존 문제, 교육 자료, 기출문제를 검색하여 참고하세요
+2. 검증된 문제 스타일을 바탕으로 고품질 문제를 만드세요
+3. JSON 배열로 정확히 ${safeCount}개를 출력하세요
 
-**핵심 원칙: 정답이 유일하고 명확한 문제만 출제**
+**핵심 원칙**:
+- 정답이 유일하고 명확한 문제만
+- 교육적 가치가 있는 문제
+- 주제에 직접 관련된 내용만
 
 **문제 유형 분배 가이드:**
 - OX 문제: 전체의 30-40% (사실 확인, 개념 이해)
@@ -240,6 +246,7 @@ exports.aiProxy = onRequest({ region: 'us-central1', cors: true, invoker: 'publi
         { role: 'user', parts: [{ text: instruction }] },
         { role: 'user', parts: [{ text: String(prompt) }] }
       ],
+      tools: [{ googleSearch: {} }], // 웹 검색 활성화
       generationConfig: { responseMimeType: 'application/json' }
     };
 
