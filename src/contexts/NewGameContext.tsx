@@ -631,15 +631,27 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
           } else {
             isCorrect = String(q.correctAnswer).toString().trim() === answerStr;
           }
-          return isCorrect ? { ...p, score: p.score + q.score } : p;
+          
+          // 오답 탈락 모드가 활성화되어 있고, 답이 틀렸거나 제출하지 않았으면 탈락 처리
+          const shouldEliminate = latest.gameSettings?.eliminationMode && 
+            (!isCorrect || !p.hasSubmitted || !p.currentAnswer);
+          
+          return isCorrect 
+            ? { ...p, score: p.score + q.score } 
+            : { ...p, isEliminated: shouldEliminate || p.isEliminated };
         });
-        // 변경된 점수만 추려 배치 업데이트 (대규모 인원 최적화)
+        // 변경된 점수와 탈락 상태만 추려 배치 업데이트 (대규모 인원 최적화)
         const updates: { [pid: string]: Partial<Player> } = {} as any;
         latest.players.forEach((p: any) => {
           const after = gradedPlayers.find((gp: any) => gp.id === p.id);
           if (!after) return;
-          if ((after.score || 0) !== (p.score || 0)) {
-            updates[p.id] = { score: after.score } as any;
+          const hasScoreChange = (after.score || 0) !== (p.score || 0);
+          const hasEliminationChange = after.isEliminated !== p.isEliminated;
+          if (hasScoreChange || hasEliminationChange) {
+            updates[p.id] = { 
+              score: after.score,
+              isEliminated: after.isEliminated
+            } as any;
           }
         });
         setState(prev => ({ ...prev, players: gradedPlayers }));

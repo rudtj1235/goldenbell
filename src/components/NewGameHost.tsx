@@ -31,7 +31,6 @@ const NewGameHost: React.FC = () => {
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const [rankTab, setRankTab] = useState<'team' | 'individual'>('team'); // 순위 탭
   const [finalPlayers, setFinalPlayers] = useState<Player[]>([]); // 게임 종료 시 최종 순위 데이터
-
   const { state, actions } = useNewGameContext();
   const { room, questions, players, gameState, currentQuestionIndex, gameSettings, phaseStartedAt, phaseDuration, paused } = state;
   
@@ -75,9 +74,6 @@ const NewGameHost: React.FC = () => {
       eventBus.on('GAME_STATE_CHANGE', handleGameStateChange),
       eventBus.on('NEXT_QUESTION', handleNextQuestion),
       eventBus.on('ANSWER_SHOWN', handleAnswerShown),
-      eventBus.on('PLAYER_JOIN', handlePlayerJoin),
-      eventBus.on('PLAYER_LEAVE', handlePlayerLeave),
-      eventBus.on('ANSWER_SUBMITTED', handleAnswerSubmitted),
     ];
 
     return () => {
@@ -110,15 +106,7 @@ const NewGameHost: React.FC = () => {
   }, [gameState, players]);
 
   useEffect(() => {
-    console.info('[AUTO_FLOW] mount or state hydrate', {
-      gameState,
-      currentQuestionIndex,
-      questions: questions?.length,
-      phaseStartedAt,
-      phaseDuration,
-      paused,
-      autoMode: gameSettings.autoMode
-    });
+    // 컴포넌트 마운트 시 초기화
   }, []);
 
   // 진행페이지는 타이머의 원천이 아님: 컨텍스트 phaseStartedAt/phaseDuration로만 시간 계산
@@ -151,9 +139,7 @@ const NewGameHost: React.FC = () => {
   }, [gameState, phaseStartedAt, phaseDuration, paused]);
 
   useEffect(() => {
-    if (timeLeft === 3 || timeLeft === 2 || timeLeft === 1 || timeLeft === 0) {
-      console.debug('[AUTO_TIMER] tick', { gameState, timeLeft });
-    }
+    // 타이머 상태 업데이트
   }, [timeLeft, gameState]);
 
   useEffect(() => {
@@ -166,23 +152,13 @@ const NewGameHost: React.FC = () => {
     // 실제 만료 검증(서버 기준 시간) 후에만 자동 전환
     const expired = !!(phaseStartedAt && phaseDuration && (Date.now() - phaseStartedAt) / 1000 >= phaseDuration);
     if (!expired) {
-      console.warn('[AUTO_FLOW] not expired by server time yet', {
-        now: Date.now(), phaseStartedAt, phaseDuration,
-        diffSec: phaseStartedAt ? Math.floor((Date.now() - phaseStartedAt) / 1000) : null
-      });
       return;
     }
     setCountdownActive(false);
     if (!gameSettings.autoMode) return;
     if (gameState === 'playing') {
-      console.info('[AUTO_FLOW] calling showAnswer due to timeout', {
-        index: currentQuestionIndex
-      });
       actions.showAnswer();
     } else if (gameState === 'showingAnswer') {
-      console.info('[AUTO_FLOW] calling nextQuestion due to timeout', {
-        index: currentQuestionIndex
-      });
       actions.nextQuestion();
     }
   }, [timeLeft, gameState, gameSettings.autoMode, actions, phaseStartedAt, phaseDuration]);
@@ -201,17 +177,8 @@ const NewGameHost: React.FC = () => {
     setShowAnswer(true);
   };
 
-  const handlePlayerJoin = (player: Player) => {
-    // 참여자 처리
-  };
 
-  const handlePlayerLeave = (playerId: string) => {
-    // 퇴장 처리
-  };
 
-  const handleAnswerSubmitted = (data: any) => {
-    // 답안 제출 처리
-  };
 
   const handlePlayerClick = (playerId: string) => {
     if (eliminateMode) {
@@ -225,6 +192,12 @@ const NewGameHost: React.FC = () => {
     }
   };
 
+  const cancelMode = () => {
+    setEliminateMode(false);
+    setReviveMode(false);
+    document.body.style.cursor = 'default';
+  };
+
   const handleEliminateMode = () => {
     setEliminateMode(true);
     setReviveMode(false);
@@ -235,12 +208,6 @@ const NewGameHost: React.FC = () => {
     setReviveMode(true);
     setEliminateMode(false);
     document.body.style.cursor = 'url("data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'24\' height=\'24\' viewBox=\'0 0 24 24\'><text y=\'18\' font-size=\'18\'>✅</text></svg>") 12 12, auto';
-  };
-
-  const cancelMode = () => {
-    setEliminateMode(false);
-    setReviveMode(false);
-    document.body.style.cursor = 'default';
   };
 
   const sortPlayers = (players: Player[]): Player[] => {
@@ -363,8 +330,8 @@ const NewGameHost: React.FC = () => {
                 <p>문제를 추가하거나 게임을 시작해 주세요.</p>
               </div>
             ) : displayGameState === 'finished' ? (
-              <div className="finished-message" style={{ width: '100%', maxWidth: 'min(90vw, 1200px)', margin: '0 auto' }}>
-                <h2 style={{ color: 'white', textShadow: '2px 2px 4px rgba(0,0,0,0.3)', marginBottom: '30px', fontSize: '2.5rem' }}>🎉 게임 종료!</h2>
+              <div className="finished-message" style={{ width: '100%', maxWidth: 'min(95vw, 1400px)', margin: '0 auto' }}>
+                <h2 style={{ color: 'white', textShadow: '2px 2px 4px rgba(0,0,0,0.3)', marginBottom: '40px', fontSize: '4rem', fontWeight: '700' }}>🎉 게임 종료!</h2>
                 
                 {/* 순위 탭 */}
                 <div style={{ background: 'white', borderRadius: '20px', padding: 'clamp(20px, 4vw, 50px)', marginTop: '20px', minHeight: '500px' }}>
@@ -373,10 +340,10 @@ const NewGameHost: React.FC = () => {
                       onClick={() => setRankTab('team')}
                       style={{
                         flex: 1,
-                        padding: '18px',
+                        padding: '24px',
                         border: 'none',
-                        borderRadius: '12px',
-                        fontSize: '1.3rem',
+                        borderRadius: '16px',
+                        fontSize: '1.5rem',
                         fontWeight: 700,
                         cursor: 'pointer',
                         background: rankTab === 'team' ? '#ffc107' : '#f0f0f0',
@@ -390,10 +357,10 @@ const NewGameHost: React.FC = () => {
                       onClick={() => setRankTab('individual')}
                       style={{
                         flex: 1,
-                        padding: '18px',
+                        padding: '24px',
                         border: 'none',
-                        borderRadius: '12px',
-                        fontSize: '1.3rem',
+                        borderRadius: '16px',
+                        fontSize: '1.5rem',
                         fontWeight: 700,
                         cursor: 'pointer',
                         background: rankTab === 'individual' ? '#ffc107' : '#f0f0f0',
@@ -491,7 +458,12 @@ const NewGameHost: React.FC = () => {
       <footer className="game-footer">
         <div className="players-section">
           <div className="players-header">
-            <h3>참여자 현황</h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <h3>참여자 현황</h3>
+              <small style={{ color: '#666', fontSize: '0.9rem' }}>
+                아바타를 클릭하여 탈락시키거나 부활시킬 수 있습니다.
+              </small>
+            </div>
             <div className="player-stats">
               <span>전체: {players.length}명</span>
               <span>탈락: {players.filter((p: Player) => p.isEliminated).length}명</span>
@@ -507,7 +479,11 @@ const NewGameHost: React.FC = () => {
                   player.hasSubmitted ? 'submitted' : ''
                 } ${eliminateMode || reviveMode ? 'clickable' : ''}`}
                 onClick={() => {
+                  if (eliminateMode || reviveMode) {
+                    handlePlayerClick(player.id);
+                  } else {
                   setActiveCardId(prev => prev === player.id ? null : player.id);
+                  }
                 }}
               >
                 <div className="player-avatar" style={{ background: getTeamBg(player.team) }}>
@@ -542,14 +518,20 @@ const NewGameHost: React.FC = () => {
                     {!player.isEliminated ? (
                       <button
                         className="card-action-btn"
-                        onClick={() => { actions.eliminatePlayer(player.id); setActiveCardId(null); }}
+                        onClick={() => { 
+                          actions.eliminatePlayer(player.id);
+                          setActiveCardId(null); 
+                        }}
                       >
                         탈락시키기
                       </button>
                     ) : (
                       <button
                         className="card-action-btn"
-                        onClick={() => { actions.revivePlayer(player.id); setActiveCardId(null); }}
+                        onClick={() => { 
+                          actions.revivePlayer(player.id);
+                          setActiveCardId(null); 
+                        }}
                       >
                         부활시키기
                       </button>
@@ -570,7 +552,7 @@ const NewGameHost: React.FC = () => {
         {/* 카드 클릭 시 표시되는 탈락/부활 컨트롤 */}
         {(eliminateMode || reviveMode) && (
           <div className="elimination-controls">
-            <button className="control-btn" onClick={(e)=>{e.stopPropagation(); setEliminateMode(true); setReviveMode(false);}}>탈락시키기 모드</button>
+            <button className="control-btn" onClick={(e)=>{e.stopPropagation(); setEliminateMode(true); setReviveMode(false);}}>오답 탈락</button>
             <button className="control-btn" onClick={(e)=>{e.stopPropagation(); setReviveMode(true); setEliminateMode(false);}}>부활시키기 모드</button>
             <button className="control-btn" onClick={(e)=>{e.stopPropagation(); cancelMode();}}>모드 해제</button>
           </div>

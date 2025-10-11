@@ -22,64 +22,66 @@ const API_BASE = ((): string => {
 async function callGeminiOnce(prompt: string, count: number, opts?: { forceModel?: string; idToken?: string }): Promise<AiQuestion[]> {
   const url = API_BASE || '/api/ai';
   
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(opts?.idToken ? { Authorization: `Bearer ${opts.idToken}` } : {}),
-    },
-    body: JSON.stringify({ prompt, count, forceModel: opts?.forceModel })
-  });
-  
-  if (!res.ok) {
-    const t = await res.text().catch(() => '');
-    console.warn('[AI_GEN] ✖ 프록시 실패', { status: res.status, body: t.slice(0, 300) });
-    throw new Error('Gemini 호출 실패');
-  }
-  
-  const data = await res.json();
-  let text: string = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
-  
-  if (text.startsWith('```')) {
-    const first = text.indexOf('\n');
-    const lastFence = text.lastIndexOf('```');
-    if (first !== -1 && lastFence !== -1) text = text.slice(first + 1, lastFence);
-  }
-  
-  let parsed: any;
   try {
-    parsed = JSON.parse(text);
-  } catch {
-    const s = text.indexOf('[');
-    const e = text.lastIndexOf(']');
-    if (s === -1 || e === -1) throw new Error('AI 응답 파싱 실패');
-    parsed = JSON.parse(text.slice(s, e + 1));
-  }
-  
-  const arr: any[] = Array.isArray(parsed) ? parsed : [parsed];
-  let items = arr.filter((q) => q && ['ox','multiple','short'].includes(q.type) && typeof q.question === 'string');
-  
-  return items.map((q, i) => {
-    const base: AiQuestion = {
-      id: q.id || `ai_${Date.now()}_${i}`,
-      type: q.type,
-      question: q.question,
-      correctAnswer: q.correctAnswer,
-      score: typeof q.score === 'number' ? q.score : 10
-    };
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(opts?.idToken ? { Authorization: `Bearer ${opts.idToken}` } : {}),
+      },
+      body: JSON.stringify({ prompt, count, forceModel: opts?.forceModel })
+    });
     
-    // options가 유효한 경우에만 포함
-    if (Array.isArray(q.options) && q.options.length > 0) {
-      base.options = q.options;
+    if (!res.ok) {
+      const errorText = await res.text().catch(() => 'Unknown error');
+      throw new Error(`API 호출 실패 (${res.status}): ${errorText.slice(0, 100)}`);
     }
     
-    return base;
-  });
+    // Functions에서 이미 JSON 객체로 파싱해서 보내므로 직접 사용
+    const questions: any[] = await res.json();
+    
+    if (!Array.isArray(questions)) {
+      throw new Error('API 응답이 배열이 아닙니다');
+    }
+    
+    // 유효한 문제만 필터링
+    const validQuestions = questions.filter(q => 
+      q && 
+      typeof q === 'object' &&
+      ['ox', 'multiple', 'short'].includes(q.type) && 
+      typeof q.question === 'string' &&
+      q.question.trim().length > 0
+    );
+    
+    if (validQuestions.length === 0) {
+      throw new Error('유효한 문제가 없습니다');
+    }
+    
+    // AiQuestion 형식으로 변환
+    return validQuestions.map((q, i) => {
+      const question: AiQuestion = {
+        id: q.id || `ai_${Date.now()}_${i}`,
+        type: q.type,
+        question: q.question.trim(),
+        correctAnswer: q.correctAnswer,
+        score: typeof q.score === 'number' ? q.score : 10
+      };
+      
+      // 객관식 문제인 경우에만 options 포함
+      if (q.type === 'multiple' && Array.isArray(q.options) && q.options.length === 4) {
+        question.options = q.options;
+      }
+      
+      return question;
+    });
+    
+  } catch (error) {
+    throw error instanceof Error ? error : new Error('알 수 없는 오류가 발생했습니다');
+  }
 }
 
 // AI 검증 함수 (2단계)
 async function validateQuestions(questions: AiQuestion[], originalPrompt: string, opts?: { idToken?: string }): Promise<AiQuestion[]> {
-  console.info('[AI_VALIDATE] 🔍 검증 시작', { count: questions.length });
   
   const validationPrompt = `아래는 "${originalPrompt}" 주제로 생성된 ${questions.length}개의 문제입니다. 각 문제를 철저히 검증하고 형식에 맞게 수정하세요.
 
@@ -134,7 +136,6 @@ ${JSON.stringify(questions, null, 2)}
 
   try {
     const validated = await callGeminiOnce(validationPrompt, questions.length, opts);
-    console.info('[AI_VALIDATE] ✅ 검증 완료', { original: questions.length, validated: validated.length });
     
     // 검증 실패 시 원본 반환하지 말고 에러 발생
     if (validated.length === 0) {
@@ -143,7 +144,6 @@ ${JSON.stringify(questions, null, 2)}
     
     return validated;
   } catch (e) {
-    console.error('[AI_VALIDATE] ❌ 검증 실패', e);
     // 검증 실패 시 원본도 반환하지 않음 (품질 보장)
     throw new Error('AI 검증에 실패했습니다. 다시 시도해주세요.');
   }
@@ -151,7 +151,6 @@ ${JSON.stringify(questions, null, 2)}
 
 // 메인 AI 문제 생성 함수 (2단계: 생성 → 검증)
 export async function generateQuestionsWithGemini(prompt: string, count = 10, opts?: { forceModel?: string; idToken?: string }): Promise<AiQuestion[]> {
-  console.info('[AI_GEN] 🎯 1단계: 문제 생성', { count, prompt: prompt.slice(0, 50) + '...' });
   
   // 1단계: 문제 생성 (교육 현장 스타일 + 주제 중심)
   const generationPrompt = `주제: ${prompt}
@@ -192,9 +191,7 @@ JSON 배열만: [{ ... }, ...]
   
   try {
     generated = await callGeminiOnce(generationPrompt, count, opts);
-    console.info('[AI_GEN] ✅ 1단계 완료', { generated: generated.length });
   } catch (error) {
-    console.error('[AI_GEN] ❌ 생성 실패', error);
     throw new Error('AI 문제 생성에 실패했습니다.');
   }
   
@@ -203,14 +200,7 @@ JSON 배열만: [{ ... }, ...]
   }
   
   // 2단계: AI 자체 검증 (원본 프롬프트 전달)
-  console.info('[AI_GEN] 🎯 2단계: 문제 검증', { count: generated.length });
   const validated = await validateQuestions(generated, prompt, opts);
-  
-  console.info('[AI_GEN] 🎉 최종 완료', { 
-    generated: generated.length,
-    validated: validated.length,
-    requested: count
-  });
   
   return validated.slice(0, count); // 요청한 개수만 반환
 }

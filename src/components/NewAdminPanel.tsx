@@ -63,7 +63,7 @@ const NewAdminPanel: React.FC = () => {
         try {
           syncManagerFs.deleteRoom();
         } catch (e) {
-          console.error('방 삭제 실패:', e);
+          // 방 삭제 실패 처리
         }
       }
     };
@@ -96,10 +96,9 @@ const NewAdminPanel: React.FC = () => {
             const roomDoc = snap.docs[0];
             const roomData = roomDoc.data();
             await (syncManagerFs as any).connectToRoom(roomDoc.id);
-            console.log('🔄 자동 방 복구:', roomDoc.id);
           }
         } catch (e) {
-          console.warn('방 자동 복구 실패:', e);
+          // 방 자동 복구 실패 처리
         }
       };
       
@@ -409,7 +408,6 @@ const NewAdminPanel: React.FC = () => {
         const msg = { message: `📄 CSV에서 ${imported.length}개의 문제를 불러왔습니다!`, type: 'success' };
         syncManagerFs.broadcast('SYSTEM_MESSAGE', msg);
       } catch (err: any) {
-        console.error('문제 업로드 실패:', err);
         alert('업로드에 실패했습니다: ' + (err?.message || String(err)));
       } finally {
         e.target.value = '';
@@ -430,7 +428,7 @@ const NewAdminPanel: React.FC = () => {
         await syncManagerFs.deleteRoom();
       }
     } catch (e) {
-      console.error('방 삭제 실패:', e);
+      // 방 삭제 실패 처리
     } finally {
       actions.resetGame();
       navigate('/');
@@ -550,7 +548,7 @@ const NewAdminPanel: React.FC = () => {
         <div className="left-panel">
           <div className="control-section">
             <h3>게임 제어</h3>
-            <div className="control-buttons" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8 }}>
+            <div className="control-buttons">
               <button 
                 className="btn btn--y-gold" 
                 onClick={handleStartGame}
@@ -650,7 +648,7 @@ const NewAdminPanel: React.FC = () => {
 
           <div className="settings-section">
             <h3>기본 설정</h3>
-            <div className="settings-grid" style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
+            <div className="settings-grid">
               <div className="setting-item">
                 <div className="setting-row">
                   <span className="badge badge--y-light">문제 제시(초)</span>
@@ -666,6 +664,20 @@ const NewAdminPanel: React.FC = () => {
               </div>
               <div className="setting-item">
                 <div className="setting-row">
+                  <span className="badge badge--y-butter">수동으로 넘기기</span>
+                  <div className="fill">
+                    <label className="checkbox-label checkbox-lg">
+                      <input
+                        type="checkbox"
+                        checked={!gameSettings.autoMode}
+                        onChange={(e) => handleGameSettingsChange({ autoMode: !e.target.checked })}
+                      />
+                    </label>
+                  </div>
+                </div>
+              </div>
+              <div className="setting-item">
+                <div className="setting-row">
                   <span className="badge badge--y-sunset">정답 공개(초)</span>
                   <input
                     className="input"
@@ -677,15 +689,16 @@ const NewAdminPanel: React.FC = () => {
                   />
                 </div>
               </div>
+              
               <div className="setting-item">
                 <div className="setting-row">
-                  <span className="badge badge--y-butter">수동 모드</span>
+                  <span className="badge badge--y-gold">오답 즉시 탈락</span>
                   <div className="fill">
                     <label className="checkbox-label checkbox-lg">
                       <input
                         type="checkbox"
-                        checked={!gameSettings.autoMode}
-                        onChange={(e) => handleGameSettingsChange({ autoMode: !e.target.checked })}
+                        checked={gameSettings.eliminationMode}
+                        onChange={(e) => handleGameSettingsChange({ eliminationMode: e.target.checked })}
                       />
                     </label>
                   </div>
@@ -817,7 +830,6 @@ const NewAdminPanel: React.FC = () => {
         <AiQuestionModal
           onClose={() => setShowAiModal(false)}
           onGenerate={(list: AiQuestion[]) => {
-            console.info('[AI_GEN_WIRE] 수신 항목 수', list.length);
             
             // 다음 문제 번호 계산 함수
             const getNextQuestionNumber = (): number => {

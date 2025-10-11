@@ -21,84 +21,124 @@ const QuestionStack: React.FC<QuestionStackProps> = ({
   gameState,
   hasStarted
 }) => {
-  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
-  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
-  const [dragOverPosition, setDragOverPosition] = useState<'before' | 'after' | null>(null);
+  const [dragState, setDragState] = useState<{
+    draggedIndex: number | null;
+    dragOverIndex: number | null;
+    dragOverPosition: 'before' | 'after' | null;
+  }>({
+    draggedIndex: null,
+    dragOverIndex: null,
+    dragOverPosition: null
+  });
+
+  const resetDragState = () => {
+    setDragState({
+      draggedIndex: null,
+      dragOverIndex: null,
+      dragOverPosition: null
+    });
+  };
 
   const handleDragStart = (e: React.DragEvent, index: number) => {
-    // 완료된 문제는 이동 불가
     const status = getQuestionStatus(index);
-    if (status === 'completed') return;
-    setDraggedIndex(index);
+    if (status === 'completed') {
+      e.preventDefault();
+      return;
+    }
+    
+    setDragState(prev => ({ ...prev, draggedIndex: index }));
     e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', ''); // Firefox 호환성
   };
 
   const handleDragOver = (e: React.DragEvent, index: number) => {
     e.preventDefault();
+    
+    if (dragState.draggedIndex === null) return;
+    
     const status = getQuestionStatus(index);
     if (status === 'completed') return;
+    
     const target = e.currentTarget as HTMLElement;
     const rect = target.getBoundingClientRect();
     const offsetY = e.clientY - rect.top;
-    const pos: 'before' | 'after' = offsetY < rect.height / 2 ? 'before' : 'after';
-    setDragOverIndex(index);
-    setDragOverPosition(pos);
+    const position: 'before' | 'after' = offsetY < rect.height / 2 ? 'before' : 'after';
+    
+    setDragState(prev => ({
+      ...prev,
+      dragOverIndex: index,
+      dragOverPosition: position
+    }));
   };
 
-  const handleDragLeave = () => {
-    setDragOverIndex(null);
-    setDragOverPosition(null);
+  const handleDragLeave = (e: React.DragEvent) => {
+    // 자식 요소로 이동하는 경우는 무시
+    const currentTarget = e.currentTarget as HTMLElement;
+    const relatedTarget = e.relatedTarget as HTMLElement;
+    
+    if (relatedTarget && currentTarget.contains(relatedTarget)) {
+      return;
+    }
+    
+    setDragState(prev => ({
+      ...prev,
+      dragOverIndex: null,
+      dragOverPosition: null
+    }));
   };
 
   const handleDrop = (e: React.DragEvent, dropIndex: number) => {
     e.preventDefault();
     
+    const { draggedIndex, dragOverPosition } = dragState;
+    
     if (draggedIndex === null || draggedIndex === dropIndex) {
-    setDraggedIndex(null);
-    setDragOverIndex(null);
-    setDragOverPosition(null);
+      resetDragState();
       return;
     }
 
-    const newQuestions = [...questions];
-    const draggedQuestion = newQuestions[draggedIndex];
-    const dropStatus = getQuestionStatus(dropIndex);
     const dragStatus = getQuestionStatus(draggedIndex);
-    // 완료된 위치로의 이동 금지, 완료된 아이템 이동 금지
-    if (dropStatus === 'completed' || dragStatus === 'completed') {
-      setDraggedIndex(null);
-      setDragOverIndex(null);
+    const dropStatus = getQuestionStatus(dropIndex);
+    
+    // 완료된 문제는 이동 불가
+    if (dragStatus === 'completed' || dropStatus === 'completed') {
+      resetDragState();
       return;
     }
+    
+    // 새로운 배열 생성
+    const newQuestions = [...questions];
+    const draggedQuestion = newQuestions[draggedIndex];
     
     // 드래그된 아이템 제거
     newQuestions.splice(draggedIndex, 1);
     
-    // 새 위치에 삽입
-    let insertIndex = draggedIndex < dropIndex ? dropIndex - 1 : dropIndex;
-    // 리스트 끝으로 이동 허용 (맨 아래도 드랍 허용)
-    if (dropIndex >= newQuestions.length) {
-      insertIndex = newQuestions.length;
+    // 삽입할 인덱스 계산
+    let insertIndex = dropIndex;
+    
+    // 드래그된 아이템이 원래 위치보다 앞에 있었으면 인덱스 조정
+    if (draggedIndex < dropIndex) {
+      insertIndex = dropIndex - 1;
     }
-    // 위/아래 위치 보정
+    
+    // before/after 위치에 따른 조정
     if (dragOverPosition === 'after') {
-      insertIndex = draggedIndex < dropIndex ? dropIndex : dropIndex + 1;
-      if (insertIndex > newQuestions.length) insertIndex = newQuestions.length;
-    } else if (dragOverPosition === 'before') {
-      insertIndex = draggedIndex < dropIndex ? dropIndex - 1 : dropIndex;
-      if (insertIndex < 0) insertIndex = 0;
+      insertIndex += 1;
     }
+    
+    // 배열 범위 내로 제한
+    insertIndex = Math.max(0, Math.min(insertIndex, newQuestions.length));
+    
+    // 새 위치에 삽입
     newQuestions.splice(insertIndex, 0, draggedQuestion);
     
+    // 상태 업데이트
     onReorder(newQuestions);
-    setDraggedIndex(null);
-    setDragOverIndex(null);
-    setDragOverPosition(null);
+    resetDragState();
   };
 
   const handleDragEnd = () => {
-    setDraggedIndex(null);
-    setDragOverIndex(null);
+    resetDragState();
   };
 
   const getQuestionTypeText = (type: string): string => {
@@ -141,15 +181,15 @@ const QuestionStack: React.FC<QuestionStackProps> = ({
         <div className="questions-list">
           {questions.map((question, index) => {
             const status = getQuestionStatus(index);
-            const isDragging = draggedIndex === index;
-            const isDragOver = dragOverIndex === index;
+            const isDragging = dragState.draggedIndex === index;
+            const isDragOver = dragState.dragOverIndex === index;
             
             return (
               <div
                 key={question.id}
                 data-question-id={question.id}
-                className={`question-card ${status} ${isDragging ? 'dragging' : ''} ${isDragOver ? 'drag-over' : ''} ${isDragOver && dragOverPosition==='before' ? 'insertion-before' : ''} ${isDragOver && dragOverPosition==='after' ? 'insertion-after' : ''}`}
-                draggable={gameState === 'waiting' && status !== 'completed'}
+                className={`question-card ${status} ${isDragging ? 'dragging' : ''} ${isDragOver ? 'drag-over' : ''} ${isDragOver && dragState.dragOverPosition==='before' ? 'insertion-before' : ''} ${isDragOver && dragState.dragOverPosition==='after' ? 'insertion-after' : ''}`}
+                draggable={(gameState === 'waiting' || gameState === 'finished') && status !== 'completed'}
                 onDragStart={(e) => handleDragStart(e, index)}
                 onDragOver={(e) => handleDragOver(e, index)}
                 onDragLeave={handleDragLeave}
@@ -158,7 +198,7 @@ const QuestionStack: React.FC<QuestionStackProps> = ({
               >
                 <div className="question-header">
                   <div className="question-number">문제 {index + 1}</div>
-                  <div className="badge badge--neutral">
+                  <div className={`badge badge--neutral ${question.type}`}>
                     {question.type === 'ox' ? 'OX' : question.type === 'multiple' ? '객관식' : '단답형'}
                   </div>
                   <div className="badge badge--warn">{question.score}점</div>

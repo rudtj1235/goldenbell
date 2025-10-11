@@ -64,26 +64,23 @@ exports.aiProxy = onRequest({ region: 'us-central1', cors: true, invoker: 'publi
     let pick = prefer.find(m => available.includes(m)) || prefer.find(m => m) || 'gemini-1.5-flash';
     if (forceModel && available.includes(forceModel)) pick = forceModel;
 
-    const instruction = `다음 주제로 **고급 수준**의 퀴즈 문제 ${safeCount}개를 생성하세요.
+    const instruction = `주제: ${prompt}
 
-**문제 제작 방법**:
-1. 웹에서 해당 주제의 전문 자료, 학술 논문, 고급 교육 콘텐츠를 검색하여 참고하세요
-2. 대학 수준 이상의 지식을 요구하는 문제를 만드세요
-3. 단순 암기가 아닌 **사고력과 이해력**을 평가하는 문제로 구성하세요
-4. JSON 배열로 정확히 ${safeCount}개를 출력하세요
+위 주제로 교육용 퀴즈 문제 ${safeCount}개를 생성하세요.
 
-**핵심 원칙**:
-- **고급 수준**: 중등교육 이상의 지식과 사고력 요구
-- **정답이 유일하고 명확한** 문제만
-- **교육적 가치가 높은** 전문적 내용
-- **주제에 직접 관련된** 깊이 있는 내용
-- **단순 암기 금지**: 이해와 응용을 요구하는 문제
+**웹 검색 활용**: 해당 주제의 교과서, 참고서, 기출문제를 검색하여 참고하세요.
 
-**문제 유형 분배 가이드:**
-- OX 문제: 전체의 30-40% (사실 확인, 개념 이해)
-- 객관식 문제: 전체의 40-50% (계산, 선택, 비교)
-- 단답형 문제: 전체의 20-30% (유일한 답만 가능한 문제)
-- 각 유형을 골고루 섞어서 ${safeCount}개 생성
+**문제 유형**:
+- OX: 참/거짓 문제 (30-40%)
+- 객관식: 4지선다 문제 (40-50%) 
+- 단답형: 숫자/단어 답 문제 (20-30%)
+
+**JSON 형식**:
+- OX: {"type":"ox","question":"...","correctAnswer":"O 또는 X","score":10}
+- 객관식: {"type":"multiple","question":"...","options":["1","2","3","4"],"correctAnswer":0~3,"score":10}
+- 단답형: {"type":"short","question":"...","correctAnswer":"답","score":10}
+
+**중요**: JSON 배열만 출력하세요. 다른 텍스트는 포함하지 마세요.
 
 **단답형 문제 특별 주의사항 (매우 중요! 반드시 준수!):**
 
@@ -252,7 +249,7 @@ exports.aiProxy = onRequest({ region: 'us-central1', cors: true, invoker: 'publi
     };
 
     let last = null;
-    // 2) v1beta 우선 (Google Search, JSON 응답 지원), 실패 시 v1로 폴백
+    // 2) v1beta 우선 (웹 검색 활용), 실패 시 v1로 폴백
     const bases = ['https://generativelanguage.googleapis.com/v1beta/models','https://generativelanguage.googleapis.com/v1/models'];
     for (const base of bases) {
       for (const model of [pick, ...prefer.filter(m => m !== pick)]) {
@@ -261,8 +258,20 @@ exports.aiProxy = onRequest({ region: 'us-central1', cors: true, invoker: 'publi
         // v1beta에서만 고급 기능 사용
         const requestBody = base.includes('v1beta') ? {
           ...body,
-          tools: [{ googleSearch: {} }],
-          generationConfig: { responseMimeType: 'application/json' }
+          tools: [{ 
+            google_search_retrieval: {
+              dynamic_retrieval_config: {
+                mode: "MODE_DYNAMIC",
+                dynamic_threshold: 0.7
+              }
+            }
+          }],
+          generationConfig: { 
+            responseMimeType: 'application/json',
+            temperature: 0.7,
+            topP: 0.8,
+            topK: 40
+          }
         } : body;
         
         const r = await fetch(url, {
@@ -271,18 +280,58 @@ exports.aiProxy = onRequest({ region: 'us-central1', cors: true, invoker: 'publi
           body: JSON.stringify(requestBody)
         });
         const txt = await r.text();
-        console.log(`[AI_PROXY] ${model} (${base}): ${r.status} - ${txt.slice(0, 500)}`);
-        if (r.ok) return res.status(200).send(txt);
+        if (r.ok) {
+          try {
+            const response = JSON.parse(txt);
+            if (response.candidates?.[0]?.content?.parts) {
+              const parts = response.candidates[0].content.parts;
+              const combinedText = parts.map(part => part.text || '').join('');
+              
+              // 마크다운 제거
+              const cleanText = combinedText
+                .replace(/```json\s*/g, '')
+                .replace(/```\s*/g, '')
+                .trim();
+              
+              // JSON 배열 추출 - 간단하고 안정적인 방법
+              let questions = null;
+              
+              try {
+                // 먼저 전체 텍스트를 직접 파싱 시도
+                questions = JSON.parse(cleanText);
+              } catch (e) {
+                // 실패하면 첫 번째 [부터 마지막 ]까지 추출
+                const startIdx = cleanText.indexOf('[');
+                const lastIdx = cleanText.lastIndexOf(']');
+                if (startIdx !== -1 && lastIdx !== -1 && lastIdx > startIdx) {
+                  try {
+                    const jsonStr = cleanText.substring(startIdx, lastIdx + 1);
+                    questions = JSON.parse(jsonStr);
+                  } catch (e2) {
+                    console.error(`[AI_PROXY] JSON 파싱 실패: ${e2.message}`);
+                  }
+                }
+              }
+              
+              if (Array.isArray(questions) && questions.length > 0) {
+                return res.status(200).json(questions);
+              }
+            }
+          } catch (e) {
+            console.error(`[AI_PROXY] JSON 파싱 실패: ${e.message}`);
+          }
+          return res.status(200).json([]);
+        }
         last = { status: r.status, model, base, body: txt.slice(0, 2000) };
         // 404/400은 다음 모델/엔드포인트로 곧바로 폴백
         if (r.status !== 404 && r.status !== 400) break;
       }
       if (last && last.status !== 404 && last.status !== 400) break;
     }
-    return res.status(502).json({ error: 'upstream', detail: last });
+    return res.status(502).json({ error: 'All AI models failed', detail: last });
   } catch (e) {
-    console.error('[AI_PROXY] Error:', e);
-    return res.status(500).json({ error: 'proxy', message: String(e && e.message || e) });
+    console.error('[AI_PROXY] 서버 오류:', e);
+    return res.status(500).json({ error: 'Internal server error', message: e.message || 'Unknown error' });
   }
 });
 

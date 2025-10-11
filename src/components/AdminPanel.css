@@ -5,7 +5,7 @@
 }
 
 /* Unified tokens */
-:root { --btn-radius: 10px; --btn-h: 40px; --btn-px: 16px; --btn-fs: 0.95rem; --badge-radius: 10px; --badge-px: 10px; --badge-py: 6px; }
+:root { --btn-radius: 10px; --btn-h: 40px; --btn-px: 16px; --btn-fs: 0.95rem; --badge-radius: 8px; --badge-px: 12px; --badge-py: 8px; }
 .btn { height: var(--btn-h); padding: 0 var(--btn-px); border-radius: var(--btn-radius); border: none; font-weight: 700; font-size: var(--btn-fs); cursor: pointer; }
 .btn--green { background: #28a745; color: #fff; }
 .btn--orange { background: #fd7e14; color: #fff; }
@@ -14,7 +14,13 @@
 .btn:disabled { opacity: .7; filter: grayscale(20%); }
 .badge { border-radius: var(--badge-radius); padding: var(--badge-py) var(--badge-px); font-weight: 600; }
 .badge--muted { background: rgba(255,255,255,0.2); color: #fff; }
-.badge--warn { background: #ffc107; color: #212529; }
+.badge--warn { background: rgba(255,255,255,0.85); color: #111; border: 1px solid #e9ecef; }
+.badge--y-gold { background: rgba(212,175,55,0.9); color: #111; border: 1px solid #e9ecef; }
+
+/* 문제 유형별 배지 색상 */
+.badge--neutral.ox { background: rgba(255,249,196,0.9); color: #111; border: 1px solid #e9ecef; } /* 문제제시와 동일 */
+.badge--neutral.multiple { background: rgba(255,224,138,0.9); color: #111; border: 1px solid #e9ecef; } /* 수동모드와 동일 */
+.badge--neutral.short { background: rgba(255,193,7,0.9); color: #111; border: 1px solid #e9ecef; } /* 정답공개와 동일 */
 
 /* Header */
 .admin-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 24px; background: rgba(255,255,255,0.1); backdrop-filter: blur(10px); color: #fff; }
@@ -218,10 +224,35 @@
 
 /* Controls */
 .control-buttons { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; align-items: center; }
-.time-controls { display: flex; align-items: center; gap: 6px; justify-content: center; width: 100%; }
-.time-controls .input { flex: 1 1 auto; min-width: 60px; max-width: 140px; }
-.time-controls .btn { height: var(--btn-h); }
-.time-input { width: 80px; height: var(--btn-h); padding: 6px 8px; border: 2px solid #e9ecef; border-radius: var(--btn-radius); font-size: 0.95rem; }
+.time-controls { 
+  display: flex; 
+  align-items: center; 
+  gap: 6px; 
+  justify-content: flex-start; /* 왼쪽 정렬로 변경 */
+  width: auto; /* 내용에 맞게 조정 */
+  max-width: 100%; /* 그리드 영역을 넘지 않도록 */
+  overflow: hidden; /* 넘치는 요소 숨김 */
+}
+.time-controls .input { 
+  flex: 0 0 auto; /* 고정 크기로 변경 */
+  width: 60px; /* 데스크탑 기준 60px */
+  min-width: 50px; 
+  max-width: 70px; /* 최대 너비 제한 */
+}
+.time-controls .btn { 
+  height: var(--btn-h); 
+  flex-shrink: 0; /* 버튼 크기 고정 */
+  min-width: 40px; /* 최소 너비 보장 */
+}
+.time-input { 
+  width: 80px; 
+  height: var(--btn-h); 
+  padding: 6px 8px; 
+  border: 2px solid #e9ecef; 
+  border-radius: var(--btn-radius); 
+  font-size: 0.95rem; 
+  max-width: 100px; /* 입력 필드 최대 너비 제한 */
+}
 .time-unit { color: #111; }
 .control-btn { height: var(--btn-h); padding: 0 var(--btn-px); border-radius: var(--btn-radius); border: 1px solid #e9ecef; font-weight: 700; font-size: var(--btn-fs); cursor: pointer; background: rgba(255,255,255,0.85); color:#111; }
 .start-btn, .resume-btn, .pause-btn, .submit-btn, .reveal-btn, .end-btn, .leaderboard-btn { background: rgba(255, 193, 7, 0.85); color: #111; }
@@ -275,17 +306,81 @@
 .question-type { background: rgba(255,255,255,0.85); color: #111; }
 .question-score { background: rgba(255, 193, 7, 0.85); color: #111; }
 
-.settings-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;align-items:center}
-.setting-item label{font-weight:700;color:#333;margin-bottom:6px;display:block}
-.setting-item .input{width:100%}
-.setting-row{display:flex;align-items:center;gap:8px;white-space:nowrap}
-.setting-row .badge{flex:0 0 auto}
-.setting-row .input{flex:1 1 auto; min-width: 80px}
+.settings-grid{
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr)); /* 2열로 변경 */
+  gap: 8px;
+  align-items: flex-start; /* 왼쪽 정렬로 변경 */
+}
+
+.setting-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0; /* flex item이 축소될 수 있도록 */
+  width: auto; /* 내용에 맞게 조정 */
+  max-width: 100%; /* 그리드 영역을 넘지 않도록 */
+}
+
+.setting-item label {
+  font-weight: 700;
+  color: #333;
+  margin-bottom: 6px;
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.setting-item .input {
+  width: 100%;
+  min-width: 0; /* 입력 필드가 축소될 수 있도록 */
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0; /* flex item이 축소될 수 있도록 */
+  width: auto; /* 내용에 맞게 조정 */
+  max-width: 100%; /* 그리드 영역을 넘지 않도록 */
+}
+
+.setting-row .badge {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.setting-row .input {
+  flex: 0 0 auto; /* 고정 크기로 변경 */
+  width: 60px; /* 데스크탑 기준 60px */
+  min-width: 50px; /* 최소 너비 보장 */
+  max-width: 70px; /* 최대 너비 제한 */
+}
+
 /* fill area next to badge for manual mode checkbox */
-.setting-row .fill{flex:1 1 auto; display:flex; align-items:center; justify-content:flex-start;}
-.checkbox-lg input[type="checkbox"]{width:22px;height:22px}
+.setting-row .fill {
+  flex: 0 0 auto; /* 고정 크기로 변경 */
+  display: flex; 
+  align-items: center; 
+  justify-content: flex-start;
+  min-width: 0;
+  width: auto; /* 내용에 맞게 조정 */
+}
+
+.checkbox-lg input[type="checkbox"] {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0; /* 체크박스 크기 고정 */
+}
+
 /* stack help text size unify with button font size */
-.stack-help p { margin: 0; color: #000; font-size: var(--btn-fs); font-weight: 700; }
+.stack-help p { 
+  margin: 0; 
+  color: #000; 
+  font-size: var(--btn-fs); 
+  font-weight: 700; 
+}
 
 .admin-header h1 { color: #fff; text-shadow: 2px 2px 4px rgba(0,0,0,0.3); }
 .questions-section h3 { color: #fff; text-shadow: 2px 2px 4px rgba(0,0,0,0.3); }
@@ -306,35 +401,112 @@
   .game-status {
     min-width: 300px;
   }
+  
+  /* 중간 크기 화면에서 설정 그리드 최적화 */
+  .settings-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    align-items: flex-start; /* 왼쪽 정렬 유지 */
+  }
+  
+  .setting-item {
+    min-width: 0;
+    width: auto; /* 내용에 맞게 조정 */
+  }
+  
+  .setting-row .input {
+    width: 60px; /* 데스크탑 기준 60px */
+    max-width: 70px;
+  }
+}
+
+@media (max-width: 900px) {
+  /* 중간 크기 화면에서 추가 최적화 */
+  .settings-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    align-items: flex-start; /* 왼쪽 정렬 유지 */
+  }
+  
+  .setting-row {
+    flex-wrap: nowrap;
+    width: auto; /* 내용에 맞게 조정 */
+  }
+  
+  .setting-row .input {
+    width: 70px; /* 호버링 버튼을 고려한 너비 */
+    max-width: 80px;
+    min-width: 60px;
+  }
+  
+  .time-controls {
+    gap: 4px;
+    justify-content: flex-start; /* 왼쪽 정렬 유지 */
+  }
+  
+  .time-controls .input {
+    width: 60px; /* 데스크탑 기준 60px */
+    max-width: 70px;
+  }
 }
 
 @media (max-width: 768px) {
   .admin-header {
     flex-direction: column;
-    gap: 15px;
+    gap: 12px;
+    text-align: left;
+    padding: 12px 16px;
+  }
+  
+  .header-left {
+    order: 1;
+    align-self: flex-start;
+  }
+  
+  .room-info {
+    order: 2;
     text-align: center;
   }
   
+  .room-info h1 {
+    font-size: 1.3rem;
+    margin: 0 0 8px 0;
+    white-space: nowrap;
+  }
+  
   .room-details {
-    flex-direction: column;
-    gap: 10px;
+    flex-direction: row;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  
+  .header-actions {
+    order: 3;
+    align-self: stretch;
+    display: flex;
+    justify-content: center;
+    gap: 8px;
   }
   
   .admin-content {
-    padding: 15px;
-    gap: 15px;
+    padding: 8px;
+    gap: 8px;
   }
   
   .left-panel {
-    padding: 20px;
+    padding: 12px;
   }
   
   .right-panel {
-    flex-direction: column;
+    flex-direction: row;
+    overflow-x: auto;
+    gap: 8px;
   }
   
   .control-buttons {
     grid-template-columns: 1fr;
+    gap: 8px;
   }
   
   .leaderboard-btn {
@@ -343,9 +515,130 @@
   
   /* 모바일에서 참여자 그리드 최적화 */
   .participants-section .players-grid {
-    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-    gap: 10px;
-    max-height: 300px;
+    grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+    gap: 6px;
+    max-height: 200px;
+  }
+  
+  /* 모바일에서 설정 그리드 반응형 처리 */
+  .settings-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  
+  .setting-item {
+    width: 100%;
+    max-width: 100%;
+    margin-bottom: 8px;
+  }
+  
+  .setting-row {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  
+  .setting-row .input {
+    width: 60px;
+    max-width: 70px;
+    min-width: 50px;
+    font-size: 0.8rem;
+  }
+  
+  .setting-row .fill {
+    flex: 1;
+    width: auto;
+    justify-content: flex-start;
+  }
+  
+  /* 모바일에서 time-controls 최적화 */
+  .time-controls {
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  
+  .time-controls .input {
+    width: 50px;
+    max-width: 70px;
+    min-width: 40px;
+    font-size: 0.8rem;
+  }
+  
+  .time-controls .btn {
+    min-width: 30px;
+    padding: 4px 8px;
+    font-size: 0.8rem;
+    height: 28px;
+  }
+}
+
+@media (max-width: 480px) {
+  .btn {
+    font-size: 0.8rem;
+    padding: 4px 8px;
+    height: 28px;
+  }
+  
+  .badge {
+    font-size: 0.7rem;
+    padding: 4px 8px;
+  }
+  
+  /* 섹션 제목 줄바꿈 방지 */
+  h3 {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  
+  .room-info h1 {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+@media (max-width: 480px) {
+  /* 매우 작은 화면에서 추가 최적화 */
+  .settings-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    align-items: flex-start; /* 왼쪽 정렬 유지 */
+  }
+  
+  .setting-item label {
+    font-size: 0.9rem;
+  }
+  
+  .setting-row .input {
+    width: 70px; /* 호버링 버튼을 고려한 너비 */
+    max-width: 80px;
+    min-width: 60px;
+  }
+  
+  .time-controls {
+    flex-direction: row;
+    align-items: center;
+    gap: 3px;
+    flex-wrap: wrap;
+  }
+  
+  .time-controls .input {
+    width: 45px; /* 고정 너비 */
+    max-width: 60px;
+    min-width: 35px;
+  }
+  
+  .time-controls .btn {
+    min-width: 25px;
+    padding: 3px 6px;
+    font-size: 0.8rem;
   }
 }
 
