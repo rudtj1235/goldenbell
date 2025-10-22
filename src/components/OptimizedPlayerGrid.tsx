@@ -11,6 +11,10 @@ interface OptimizedPlayerGridProps {
   players: Player[];
   onPlayerClick?: (playerId: string) => void;
   showActions?: boolean;
+  showKickButton?: boolean;
+  onKickPlayer?: (playerId: string, playerName: string) => void;
+  showSubmittedIndicator?: boolean;
+  showEliminatedOverlay?: boolean;
   className?: string;
 }
 
@@ -19,11 +23,19 @@ const PlayerCard = memo(({
   player, 
   onPlayerClick, 
   showActions,
+  showKickButton,
+  onKickPlayer,
+  showSubmittedIndicator,
+  showEliminatedOverlay,
   teamBgColor 
 }: { 
   player: Player; 
   onPlayerClick?: (playerId: string) => void;
   showActions?: boolean;
+  showKickButton?: boolean;
+  onKickPlayer?: (playerId: string, playerName: string) => void;
+  showSubmittedIndicator?: boolean;
+  showEliminatedOverlay?: boolean;
   teamBgColor: string;
 }) => {
   const handleClick = useCallback(() => {
@@ -31,6 +43,13 @@ const PlayerCard = memo(({
       onPlayerClick(player.id);
     }
   }, [player.id, onPlayerClick]);
+
+  const handleKickClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onKickPlayer) {
+      onKickPlayer(player.id, player.nickname);
+    }
+  }, [player.id, player.nickname, onKickPlayer]);
 
   return (
     <div 
@@ -45,7 +64,10 @@ const PlayerCard = memo(({
         >
           <AvatarDisplay avatar={player.avatar} size={50} />
         </div>
-        {player.isEliminated && (
+        {showSubmittedIndicator && player.hasSubmitted && !player.isEliminated && (
+          <div className="submitted-indicator">✓</div>
+        )}
+        {showEliminatedOverlay && player.isEliminated && (
           <div className="eliminated-overlay">❌</div>
         )}
       </div>
@@ -60,6 +82,17 @@ const PlayerCard = memo(({
           </span>
         </div>
       </div>
+      {showKickButton && onKickPlayer && (
+        <div className="player-actions">
+          <button 
+            className="btn btn--danger btn--sm"
+            onClick={handleKickClick}
+            title="강퇴하기"
+          >
+            🚫
+          </button>
+        </div>
+      )}
     </div>
   );
 });
@@ -104,6 +137,10 @@ export const OptimizedPlayerGrid = memo(({
   players, 
   onPlayerClick, 
   showActions = false,
+  showKickButton = false,
+  onKickPlayer,
+  showSubmittedIndicator = false,
+  showEliminatedOverlay = true,
   className = 'players-grid'
 }: OptimizedPlayerGridProps) => {
   // 정렬된 플레이어 목록 (메모이제이션)
@@ -134,6 +171,10 @@ export const OptimizedPlayerGrid = memo(({
           player={player}
           onPlayerClick={onPlayerClick}
           showActions={showActions}
+          showKickButton={showKickButton}
+          onKickPlayer={onKickPlayer}
+          showSubmittedIndicator={showSubmittedIndicator}
+          showEliminatedOverlay={showEliminatedOverlay}
           teamBgColor={getTeamBgColor(player.team)}
         />
       ))}

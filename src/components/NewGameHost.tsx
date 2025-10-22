@@ -3,14 +3,13 @@
  * 실시간 동기화와 참여자 현황 관리
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Player } from '../types/game';
 import { useNewGameContext } from '../contexts/NewGameContext';
-import eventBus from '../services/EventBus';
-import syncManager from '../services/SyncManager';
 import AvatarDisplay from './AvatarDisplay';
 import { renderSimpleFractions } from '../utils/fractionUtils';
 import Toast from './Toast';
+import OptimizedPlayerGrid from './OptimizedPlayerGrid';
 import './GameHost.css';
 
 // 공동 순위 계산 함수
@@ -69,16 +68,7 @@ const NewGameHost: React.FC = () => {
   };
 
   useEffect(() => {
-    // 이벤트 리스너 등록
-    const unsubscribers = [
-      eventBus.on('GAME_STATE_CHANGE', handleGameStateChange),
-      eventBus.on('NEXT_QUESTION', handleNextQuestion),
-      eventBus.on('ANSWER_SHOWN', handleAnswerShown),
-    ];
-
-    return () => {
-      unsubscribers.forEach(unsub => unsub());
-    };
+    // 컴포넌트 마운트 시 초기화
   }, []);
   
   // gameState가 finished로 변경되면 finalPlayers 저장
@@ -165,18 +155,6 @@ const NewGameHost: React.FC = () => {
 
   // ADJUST_TIME 이벤트는 phaseStartedAt/phaseDuration 업데이트로 자동 처리됨 (중복 제거)
 
-  const handleGameStateChange = (data: any) => {
-    // 상태 변경 처리
-  };
-
-  const handleNextQuestion = (data: any) => {
-    setShowAnswer(false);
-  };
-
-  const handleAnswerShown = (data: any) => {
-    setShowAnswer(true);
-  };
-
 
 
 
@@ -210,7 +188,8 @@ const NewGameHost: React.FC = () => {
     document.body.style.cursor = 'url("data:image/svg+xml,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'24\' height=\'24\' viewBox=\'0 0 24 24\'><text y=\'18\' font-size=\'18\'>✅</text></svg>") 12 12, auto';
   };
 
-  const sortPlayers = (players: Player[]): Player[] => {
+  // 참여자 정렬을 메모이제이션하여 불필요한 리렌더링 방지
+  const sortedPlayers = useMemo(() => {
     return [...players].sort((a, b) => {
       // 1. 탈락자를 뒤로
       if (a.isEliminated !== b.isEliminated) {
@@ -230,15 +209,23 @@ const NewGameHost: React.FC = () => {
         return teamOrderA - teamOrderB;
       }
       
-      // 3. 같은 팀 내에서는 점수 순
+      // 3. 같은 팀 내에서는 점수 순 (높은 점수 우선)
       if (a.team === b.team) {
-        return b.score - a.score;
+        if (b.score !== a.score) {
+          return b.score - a.score;
+        }
+        // 점수가 같으면 닉네임 순으로 정렬 (안정적인 정렬)
+        return a.nickname.localeCompare(b.nickname);
       }
       
-      // 4. 개인전끼리는 점수 순
-      return b.score - a.score;
+      // 4. 개인전끼리는 점수 순 (높은 점수 우선)
+      if (b.score !== a.score) {
+        return b.score - a.score;
+      }
+      // 점수가 같으면 닉네임 순으로 정렬 (안정적인 정렬)
+      return a.nickname.localeCompare(b.nickname);
     });
-  };
+  }, [players]);
 
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
@@ -472,7 +459,7 @@ const NewGameHost: React.FC = () => {
           </div>
           
           <div className="players-grid" onClick={(e)=>e.stopPropagation()}>
-            {sortPlayers(players).map(player => (
+            {sortedPlayers.map(player => (
               <div 
                 key={player.id}
                 className={`player-card ${player.isEliminated ? 'eliminated' : ''} ${

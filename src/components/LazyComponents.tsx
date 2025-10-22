@@ -23,5 +23,4 @@ export const EditQuestionModal = lazy(() => import('./EditQuestionModal'));
 export const OptimizedPlayerGrid = lazy(() => import('./OptimizedPlayerGrid'));
 
 // 테스트 컴포넌트 (개발 환경에서만)
-export const FirestoreTest = lazy(() => import('./FirestoreTest'));
 

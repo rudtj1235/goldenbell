@@ -67,13 +67,6 @@ class FirestoreSyncManager {
   private setupFirestoreListeners() {
     // Firestore 실시간 동기화 리스너 설정
     realtimeGameSync.addEventListener('GAME_DATA_UPDATE', (data: RealtimeGameData) => {
-      // 낙관적 업데이트 깜빡임 방지: 200ms 이내 중복 업데이트 무시
-      const timeDiff = data.lastUpdated - this.gameData.lastUpdated;
-      if (timeDiff > 0 && timeDiff < 200) {
-        logger.debug('🔥 중복 업데이트 무시 (깜빡임 방지):', timeDiff + 'ms');
-        return;
-      }
-      
       // lastMessage 처리 (다른 탭의 Toast 알림)
       if ((data as any).lastMessage) {
         const { id, message, type } = (data as any).lastMessage;
@@ -219,6 +212,20 @@ class FirestoreSyncManager {
    */
   async batchUpdatePlayers(playerUpdates: { [playerId: string]: Partial<Player> }): Promise<void> {
     await realtimeGameSync.batchUpdatePlayers(playerUpdates);
+  }
+
+  /**
+   * 플레이어 강퇴
+   */
+  async kickPlayer(playerId: string): Promise<void> {
+    await realtimeGameSync.kickPlayer(playerId);
+  }
+
+  /**
+   * 플레이어 나가기
+   */
+  async leavePlayer(playerId: string): Promise<void> {
+    await realtimeGameSync.leavePlayer(playerId);
   }
 
   /**

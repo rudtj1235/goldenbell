@@ -1,13 +1,11 @@
 /**
  * 새로운 모듈 기반 게임 컨텍스트
- * SyncManager, RoomManager, EventBus를 활용한 독립적인 상태 관리
+ * FirestoreSyncManager를 활용한 실시간 상태 관리
  */
 
 import React, { createContext, useContext, useEffect, useState, ReactNode, useRef, useMemo } from 'react';
 import { Room, Player, Question, GameState, GameSettings } from '../types/game';
 import { firestoreSyncManager as syncManager } from '../services/FirestoreSyncManager';
-import roomManager from '../services/RoomManager';
-import eventBus from '../services/EventBus';
 import { useAuth } from './AuthContext';
 import logger from '../utils/logger';
 
@@ -46,6 +44,7 @@ interface GameContextValue {
     endGame: () => void;
     eliminatePlayer: (playerId: string) => void;
     revivePlayer: (playerId: string) => void;
+    kickPlayer: (playerId: string) => void;
     setAnswerDraft: (playerId: string, answer: string | number) => void;
     submitAnswer: (playerId: string, answer: string | number) => void;
     gradeCurrentQuestion: () => void;
@@ -146,6 +145,12 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
           (syncManager as any).removeEventListener?.(type, cb);
         } catch {}
       });
+      
+      // Firestore 연결 해제
+      try {
+        (syncManager as any).disconnect?.();
+      } catch {}
+      
       logger.debug('🎮 NewGameContext 정리됨');
     };
   }, []);
@@ -262,7 +267,33 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
         
         // 현재 로그인한 사용자의 UID를 hostId로 사용
         const hostId = (window as any).firebaseAuthUid || `host_${Date.now()}`;
-        const room = roomManager.createRoom(subject, isPublic, hostId);
+        
+        // 방 생성 (roomManager 대신 직접 구현)
+        const roomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+        const room: Room = {
+          id: roomCode,
+          code: roomCode,
+          subject: subject.trim(),
+          isPublic,
+          hostId,
+          players: [],
+          questions: [],
+          gameState: 'waiting',
+          currentQuestionIndex: 0,
+          gameSettings: {
+            timeLimit: 30,
+            showCorrectAnswer: true,
+            allowMultipleAttempts: false,
+            randomizeQuestions: false,
+            randomizeOptions: false
+          },
+          hasStarted: false,
+          phaseStartedAt: null,
+          phaseDuration: null,
+          paused: false,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        };
         
         // 기본 예시 문제 3개(OX/객관식/주관식)
         const now = Date.now();
@@ -320,8 +351,6 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
           gameSettings: prev.gameSettings,
           isLoading: false
         }));
-        
-        eventBus.emit('ROOM_CREATED', room);
         logger.debug('🔥 Firestore 방 생성 완료:', room.code);
       } catch (error) {
         console.error('방 생성 실패:', error);
@@ -340,7 +369,6 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
         await (syncManager as any).addPlayer(player);
 
         // 상태는 실시간 리스너에서 최신 데이터로 반영됨
-        eventBus.emit('PLAYER_JOIN', player);
         logger.debug('[JOIN_TRACE] success (firestore)', { roomCode, player: player.nickname });
         return true;
       } catch (error) {
@@ -357,7 +385,6 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
         const newQuestions = [...prev.questions, question];
         
         // 낙관적 UI 업데이트: 즉시 로컬 상태 반영
-        eventBus.emit('QUESTION_ADDED', question);
         
         // Firestore는 백그라운드에서 (깜빡임 방지)
         setTimeout(() => {
@@ -382,7 +409,6 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
         const newQuestions = [...prev.questions, ...questionsToAdd];
         
         // 낙관적 UI 업데이트: 즉시 로컬 상태 반영
-        eventBus.emit('QUESTIONS_ADDED', { count: questionsToAdd.length });
         
         // Firestore는 백그라운드에서 (깜빡임 방지)
         setTimeout(() => {
@@ -406,7 +432,6 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
         );
         
         // 낙관적 UI 업데이트: 즉시 로컬 상태 반영
-        eventBus.emit('QUESTION_UPDATED', updatedQuestion);
         
         // Firestore는 백그라운드에서 (깜빡임 방지)
         setTimeout(() => {
@@ -428,7 +453,6 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
       
       // 낙관적 UI 업데이트: 즉시 로컬 상태 반영
       setState(prev => ({ ...prev, questions: newQuestions }));
-      eventBus.emit('QUESTION_DELETED', questionId);
       
       // Firestore 업데이트는 백그라운드에서 (깜빡임 방지)
       setTimeout(() => {
@@ -439,7 +463,6 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
     reorderQuestions: (questions: Question[]) => {
       // 낙관적 UI 업데이트: 즉시 로컬 상태 반영
       setState(prev => ({ ...prev, questions }));
-      eventBus.emit('QUESTIONS_REORDERED', questions);
       
       // Firestore는 백그라운드에서 (깜빡임 방지)
       setTimeout(() => {
@@ -500,11 +523,8 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
       try {
         if (state.room) localStorage.removeItem(`grade_lock_${state.room.code}`);
       } catch {}
-      eventBus.emit('GAME_STARTED', newState);
       
-      if (state.room) {
-        roomManager.updateHostActivity(state.room.code, 'current_session');
-      }
+      // 호스트 활동 업데이트는 FirestoreSyncManager에서 처리
     },
 
     pauseGame: () => {
@@ -525,7 +545,6 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
       } as const;
       setState(prev => ({ ...prev, ...next }));
       syncManager.updateGameState(next as any);
-      eventBus.emit('GAME_PAUSED', next);
     },
 
     resumeGame: () => {
@@ -546,7 +565,6 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
       } as const;
       setState(prev => ({ ...prev, ...next }));
       syncManager.updateGameState(next as any);
-      eventBus.emit('GAME_RESUMED', next);
     },
 
     nextQuestion: () => {
@@ -591,7 +609,6 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
       try {
         if (state.room) localStorage.removeItem(`grade_lock_${state.room.code}`);
       } catch {}
-      eventBus.emit('NEXT_QUESTION', newState);
     },
 
     showAnswer: () => {
@@ -681,14 +698,12 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
         paused: false,
         ...autoSubmit
       } as any);
-      eventBus.emit('ANSWER_SHOWN', newState);
     },
 
     endGame: () => {
       const newState = { gameState: 'finished' as const };
       setState(prev => ({ ...prev, ...newState }));
       syncManager.updateGameState(newState);
-      eventBus.emit('GAME_ENDED', newState);
     },
 
     eliminatePlayer: (playerId: string) => {
@@ -697,7 +712,6 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
       );
       setState(prev => ({ ...prev, players: updatedPlayers }));
       syncManager.updateGameData({ players: updatedPlayers });
-      eventBus.emit('PLAYER_ELIMINATED', { playerId, players: updatedPlayers });
     },
 
     revivePlayer: (playerId: string) => {
@@ -706,7 +720,24 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
       );
       setState(prev => ({ ...prev, players: updatedPlayers }));
       syncManager.updateGameData({ players: updatedPlayers });
-      eventBus.emit('PLAYER_REVIVED', { playerId, players: updatedPlayers });
+    },
+
+    kickPlayer: async (playerId: string) => {
+      if (!isHost) return; // 호스트만 강퇴 가능
+      
+      try {
+        // Firestore에서 플레이어 제거
+        await syncManager.kickPlayer(playerId);
+        
+        // 로컬 상태에서도 제거
+        const updatedPlayers = state.players.filter(player => player.id !== playerId);
+        setState(prev => ({ ...prev, players: updatedPlayers }));
+        
+        logger.debug('플레이어 강퇴 완료:', playerId);
+      } catch (error) {
+        logger.error('플레이어 강퇴 실패:', error);
+        throw error;
+      }
     },
 
     submitAnswer: (playerId: string, answer: string | number) => {
@@ -718,7 +749,6 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
       setState(prev => ({ ...prev, players: updatedPlayers }));
       // 부분 업데이트로 해당 플레이어만 전송
       syncManager.updatePlayer(playerId, { hasSubmitted: true, currentAnswer: String(answer) } as any);
-      eventBus.emit('ANSWER_SUBMITTED', { playerId, answer, players: updatedPlayers });
     },
 
     gradeCurrentQuestion: () => {},
@@ -728,7 +758,6 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
       setState(prev => ({ ...prev, gameSettings: newSettings }));
       // 설정은 전파/영구화 되어야 함
       syncManager.updateGameData({ gameSettings: newSettings });
-      eventBus.emit('SETTINGS_UPDATED', newSettings);
     },
 
     resetGame: () => {
@@ -740,11 +769,10 @@ export function NewGameProvider({ children }: { children: ReactNode }) {
         gameState: 'waiting',
         currentQuestionIndex: 0,
       });
-      eventBus.emit('GAME_RESET');
     },
 
     updateHostActivity: (roomCode: string) => {
-      roomManager.updateHostActivity(roomCode, 'current_session');
+      // 호스트 활동 업데이트는 FirestoreSyncManager에서 처리
       syncManager.broadcast('HOST_ACTIVITY', { roomCode, sessionId: 'current_session' });
     },
 

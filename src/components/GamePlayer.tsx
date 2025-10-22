@@ -49,6 +49,20 @@ const GamePlayer: React.FC = () => {
     return colorMap[colorName] || '#B1E2FF';
   };
   const player = currentPlayer ? players.find((p: Player) => p.id === currentPlayer.id) : null;
+  
+  // 강퇴된 플레이어 확인
+  useEffect(() => {
+    if (currentPlayer && players.length > 0) {
+      const isPlayerStillInRoom = players.some((p: Player) => p.id === currentPlayer.id);
+      if (!isPlayerStillInRoom) {
+        // 플레이어가 방에서 제거되었으면 메인으로 리다이렉트
+        alert('방에서 제거되었습니다.');
+        localStorage.removeItem('currentPlayer');
+        localStorage.removeItem('currentRoomCode');
+        navigate('/');
+      }
+    }
+  }, [players, currentPlayer, navigate]);
   // 결과 화면용 점수/순위 계산 (finalPlayers 사용)
   const playersForResult = finalPlayers.length > 0 ? finalPlayers : players;
   const playerForResult = playersForResult.find((p: Player) => p.id === player?.id);
@@ -76,6 +90,26 @@ const GamePlayer: React.FC = () => {
     // 더 이상 이벤트 구독 불필요
     // gameState 변화로 finished 감지
   }, [navigate]);
+
+  // 페이지 이탈 감지 및 자동 정리
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (currentPlayer) {
+        try {
+          // 플레이어를 방에서 제거
+          syncManager.leavePlayer(currentPlayer.id);
+        } catch (e) {
+          console.warn('플레이어 나가기 실패:', e);
+        }
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [currentPlayer]);
   
   // gameState가 finished로 변경되면 finalPlayers 저장
   const prevGameStateForFinished = useRef<string>('');

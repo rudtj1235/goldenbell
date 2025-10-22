@@ -195,6 +195,42 @@ class RealtimeGameSync {
   }
 
   /**
+   * 플레이어 강퇴 (원자적 연산)
+   */
+  async kickPlayer(playerId: string): Promise<void> {
+    if (!this.roomId) throw new Error('Room ID가 설정되지 않음');
+
+    const roomRef = doc(db, 'game_rooms', this.roomId);
+    
+    await runTransaction(db, async (transaction) => {
+      const roomDoc = await transaction.get(roomRef);
+      
+      if (!roomDoc.exists()) {
+        throw new Error('방을 찾을 수 없습니다');
+      }
+
+      const data = roomDoc.data() as RealtimeGameData;
+      
+      if (!data.players[playerId]) {
+        throw new Error('플레이어를 찾을 수 없습니다');
+      }
+
+      // 플레이어 제거
+      const updatedPlayers = { ...data.players };
+      delete updatedPlayers[playerId];
+
+      transaction.update(roomRef, {
+        players: updatedPlayers,
+        lastUpdated: Date.now(),
+        version: increment(1),
+        updatedAt: serverTimestamp()
+      });
+    });
+
+    logger.debug('🔥 플레이어 강퇴 완료:', playerId);
+  }
+
+  /**
    * 플레이어 상태 업데이트 (점수, 답안 등)
    */
   async updatePlayer(playerId: string, updates: Partial<Player>): Promise<void> {

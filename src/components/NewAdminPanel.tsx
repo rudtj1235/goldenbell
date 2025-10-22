@@ -3,17 +3,14 @@
  * 실시간 동기화와 참여자 현황 관리
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Question, GameSettings, QuestionType, Player } from '../types/game';
 import { useNewGameContext } from '../contexts/NewGameContext';
 import AvatarDisplay from './AvatarDisplay';
-// import syncManager from '../services/SyncManager'; // 사용하지 않음
 import QuestionModal from './QuestionModal';
 import EditQuestionModal from './EditQuestionModal';
 import QuestionStack from './QuestionStack';
-import eventBus from '../services/EventBus';
-import roomManager from '../services/RoomManager';
 import { firestoreSyncManager as syncManagerFs } from '../services/FirestoreSyncManager';
 import Toast from './Toast';
 import './AdminPanel.css';
@@ -21,6 +18,7 @@ import './GameHost.css'; // player-card 스타일을 위해 추가
 import LeaderboardModal from './Leaderboard';
 import AiQuestionModal from './AiQuestionModal';
 import { AiQuestion } from '../services/ai';
+import OptimizedPlayerGrid from './OptimizedPlayerGrid';
 
 const NewAdminPanel: React.FC = () => {
   const [showQuestionModal, setShowQuestionModal] = useState(false);
@@ -114,53 +112,13 @@ const NewAdminPanel: React.FC = () => {
       actions.updateHostActivity(room.code);
     }, 5000);
 
-    // 이벤트 리스너 등록
-    const unsubscribers = [
-      eventBus.on('PLAYER_JOIN', handlePlayerJoin),
-      eventBus.on('PLAYER_LEAVE', handlePlayerLeave),
-      eventBus.on('GAME_STATE_CHANGE', handleGameStateChange),
-      eventBus.on('ROOM_DELETED', handleRoomDeleted)
-    ];
-
-    // 페이지 언로드 시 호스트 비활성 (10초 후 삭제 타이머 작동)
-    const handleBeforeUnload = () => {
-      try { roomManager.markHostInactive(room.code); } catch {}
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-
     return () => {
       clearInterval(activityInterval);
-      unsubscribers.forEach(unsub => unsub());
-      window.removeEventListener('beforeunload', handleBeforeUnload);
       // StrictMode 이중 마운트로 인한 즉시 삭제 방지: cleanup에서는 삭제하지 않음
     };
   }, [room, actions, navigate, isLoading]);
 
   // 진행 로직은 컨텍스트에서 단일 스케줄러가 담당하므로, 관리자 페이지에서는 보조 타이머를 두지 않습니다.
-
-  const handlePlayerJoin = (player: any) => {
-    const msg = { message: `👤 ${player.nickname} 님이 참여했습니다.`, type: 'info' };
-    syncManagerFs.broadcast('SYSTEM_MESSAGE', msg);
-  };
-
-  const handlePlayerLeave = (playerId: string) => {
-    const player = adminPlayers.find(p => p.id === playerId);
-    if (player) {
-      const msg = { message: `👋 ${player.nickname} 님이 퇴장했습니다.`, type: 'warning' };
-      syncManagerFs.broadcast('SYSTEM_MESSAGE', msg);
-    }
-  };
-
-  const handleGameStateChange = (data: any) => {
-    // 상태 변경 처리
-  };
-
-  const handleRoomDeleted = (roomCode: string) => {
-    if (room?.code === roomCode) {
-      alert('방이 삭제되었습니다.');
-      navigate('/');
-    }
-  };
 
   const handleDeleteQuestion = (questionId: string) => {
     // 낙관적 업데이트: UI에서 즉시 삭제 (백그라운드 처리)
@@ -476,9 +434,23 @@ const NewAdminPanel: React.FC = () => {
     syncManagerFs.broadcast('SYSTEM_MESSAGE', msg);
   };
 
+  const handleKickPlayer = (playerId: string, playerName: string) => {
+    if (window.confirm(`"${playerName}"님을 강퇴하시겠습니까?`)) {
+      try {
+        actions.kickPlayer(playerId);
+        const msg = { message: `🚫 "${playerName}"님이 강퇴되었습니다.`, type: 'warning' };
+        syncManagerFs.broadcast('SYSTEM_MESSAGE', msg);
+      } catch (error) {
+        console.error('강퇴 실패:', error);
+        alert('강퇴에 실패했습니다.');
+      }
+    }
+  };
+
   // 팀별 정렬 함수
-  const sortPlayersByTeam = (players: Player[]): Player[] => {
-    return [...players].sort((a, b) => {
+  // 참여자 정렬을 메모이제이션하여 불필요한 리렌더링 방지
+  const sortedPlayers = useMemo(() => {
+    return [...adminPlayers].sort((a, b) => {
       // 1. 팀별 정렬 (개인 → A → B → C → ... → H)
       const getTeamOrder = (team?: string): number => {
         if (!team) return 0; // 개인전이 가장 앞
@@ -492,15 +464,23 @@ const NewAdminPanel: React.FC = () => {
         return teamOrderA - teamOrderB;
       }
       
-      // 2. 같은 팀 내에서는 점수 순
+      // 2. 같은 팀 내에서는 점수 순 (높은 점수 우선)
       if (a.team === b.team) {
-        return b.score - a.score;
+        if (b.score !== a.score) {
+          return b.score - a.score;
+        }
+        // 점수가 같으면 닉네임 순으로 정렬 (안정적인 정렬)
+        return a.nickname.localeCompare(b.nickname);
       }
       
-      // 3. 개인전끼리는 점수 순
-      return b.score - a.score;
+      // 3. 개인전끼리는 점수 순 (높은 점수 우선)
+      if (b.score !== a.score) {
+        return b.score - a.score;
+      }
+      // 점수가 같으면 닉네임 순으로 정렬 (안정적인 정렬)
+      return a.nickname.localeCompare(b.nickname);
     });
-  };
+  }, [adminPlayers]);
 
   if (!room) {
     return (
@@ -716,51 +696,12 @@ const NewAdminPanel: React.FC = () => {
                 <small>방 코드: <strong>{room.code}</strong>를 공유해주세요</small>
               </div>
             ) : (
-              <div className="players-grid">
-                {sortPlayersByTeam(adminPlayers).map(player => {
-                  const getTeamBg = (team?: string): string => {
-                    if (!team) return 'rgba(255,255,255,0.85)';
-                    const teamColors: { [key: string]: string } = {
-                      'A': 'rgba(244,67,54,0.20)',
-                      'B': 'rgba(255,152,0,0.20)', 
-                      'C': 'rgba(255,235,59,0.20)',
-                      'D': 'rgba(76,175,80,0.20)',
-                      'E': 'rgba(33,150,243,0.20)',
-                      'F': 'rgba(63,81,181,0.20)', 
-                      'G': 'rgba(156,39,176,0.20)',
-                      'H': 'rgba(158,158,158,0.20)'
-                    };
-                    return teamColors[team] || 'rgba(255,255,255,0.85)';
-                  };
-
-                  return (
-                    <div key={player.id} className="player-card">
-                      <div className="player-avatar" style={{ background: getTeamBg(player.team) }}>
-                        <div 
-                          className="avatar-background"
-                          style={{ backgroundColor: getTeamBg(player.team) }}
-                        >
-                          <AvatarDisplay avatar={player.avatar} size={50} />
-                        </div>
-                        {player.isEliminated && (
-                          <div className="eliminated-overlay">❌</div>
-                        )}
-                      </div>
-                      <div className="player-info">
-                        <div className="row-top">
-                          <span className="player-name">{player.nickname}</span>
-                          {player.team && <span className="player-team">{player.team}팀</span>}
-                        </div>
-                        <div className="row-bottom">
-                          <span className="player-score" style={{ backgroundColor: getTeamBg(player.team) }}>
-                            {player.score || 0}점
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+              <OptimizedPlayerGrid 
+                players={adminPlayers}
+                showKickButton={true}
+                onKickPlayer={handleKickPlayer}
+                className="players-grid"
+              />
             )}
           </div>
         </div>

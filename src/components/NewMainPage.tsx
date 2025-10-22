@@ -1,18 +1,26 @@
 /**
  * 새로운 모듈 기반 메인 페이지
- * RoomManager와 SyncManager를 활용한 실시간 동기화
+ * Firestore 직접 구독을 활용한 실시간 동기화
  */
 
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useNewGameContext } from '../contexts/NewGameContext';
-import roomManager, { PublicRoom } from '../services/RoomManager';
 import { db } from '../config/firebase';
 import { collection, doc, getDoc, getDocs, onSnapshot, query, where } from 'firebase/firestore';
-import eventBus from '../services/EventBus';
-// FirestoreTest 제거
 import './MainPage.css';
 import { useAuth } from '../contexts/AuthContext';
+
+interface PublicRoom {
+  id: string;
+  code: string;
+  subject: string;
+  isPublic: boolean;
+  playerCount: number;
+  hostActive: boolean;
+  lastHostActivity: number;
+  createdAt: number;
+}
 
 const NewMainPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'create' | 'join'>('create');
@@ -48,33 +56,10 @@ const NewMainPage: React.FC = () => {
       setPublicRooms(rooms);
     });
 
-    const unsubscribers = [
-      eventBus.on('ROOMS_UPDATED', handleRoomsUpdated),
-      eventBus.on('ROOM_CREATED', handleRoomCreated),
-      eventBus.on('ROOM_DELETED', handleRoomDeleted)
-    ];
-
     return () => {
       off();
-      unsubscribers.forEach(unsub => unsub());
     };
   }, []);
-
-  const loadPublicRooms = () => {};
-
-  const handleRoomsUpdated = (rooms: PublicRoom[]) => {
-    // 유지보수성: 이벤트 수신 시에도 저장소를 신뢰. 여기서는 저장소에서 재로딩.
-    loadPublicRooms();
-  };
-
-  const handleRoomCreated = (room: PublicRoom) => {
-    // 저장소 기준으로 재로딩하여 표시 데이터와 저장 데이터의 불일치 제거
-    loadPublicRooms();
-  };
-
-  const handleRoomDeleted = (roomCode: string) => {
-    loadPublicRooms();
-  };
 
   const handleCreateRoom = async () => {
     // 로그인 체크 (더 엄격하게)
